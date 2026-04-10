@@ -3,7 +3,7 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
-    <title>KPM 姿態分析系統</title>
+    <title>KPM 姿態分析系統 - 前鏡頭修正版</title>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose@0.5.1675469404/pose.js" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
@@ -11,20 +11,21 @@
         body { margin: 0; background: #000; color: #0f0; font-family: sans-serif; overflow: hidden; height: 100vh; width: 100vw; display: flex; flex-direction: column; }
         #status-monitor { position: absolute; top: 10px; left: 10px; background: rgba(0,0,0,0.8); padding: 12px; z-index: 100; font-size: 14px; border: 1px solid #0f0; border-radius: 8px; pointer-events: none; }
         .container { position: relative; flex: 1; display: flex; justify-content: center; align-items: center; background: #000; overflow: hidden; }
-        #output_canvas { max-width: 100%; max-height: 100%; object-fit: contain; transform: scaleX(-1); } /* 鏡像顯示更符合直覺 */
+        /* 1. 視覺修正：CSS 水平翻轉 Canvas，讓畫面像照鏡子 */
+        #output_canvas { max-width: 100%; max-height: 100%; object-fit: contain; transform: scaleX(-1); } 
         #input_video { display: none; }
         #start-btn { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); padding: 20px 40px; font-size: 20px; background: #0f0; color: #000; border: none; border-radius: 50px; font-weight: bold; cursor: pointer; z-index: 101; box-shadow: 0 0 20px rgba(0,255,0,0.5); }
     </style>
 </head>
 <body>
     <div id="status-monitor">
-        <div style="font-weight: bold; color: #fff; margin-bottom: 5px;">KPM POSTURE AI v1.0</div>
+        <div style="font-weight: bold; color: #fff; margin-bottom: 5px;">KPM POSTURE AI (解剖學修正)</div>
         <div id="step-info">等待啟動...</div>
         <hr border="0" style="border-top: 1px solid #333; margin: 8px 0;">
         <div id="angle-info" style="font-size: 18px; color: #ffff00;">偏移角度: --°</div>
     </div>
 
-    <button id="start-btn">開始檢測 (KPM Method)</button>
+    <button id="start-btn">開始檢測 (前鏡頭模式)</button>
     
     <div class="container">
         <video id="input_video" playsinline></video>
@@ -44,16 +45,15 @@
         }});
 
         pose.setOptions({
-            modelComplexity: 1, // iPhone 13 Pro Max 效能充足，可使用中等精準度
+            modelComplexity: 1,
             smoothLandmarks: true,
             minDetectionConfidence: 0.5,
             minTrackingConfidence: 0.5
         });
 
         pose.onResults((results) => {
-            stepInfo.innerText = "● 臨床數據運算中";
+            stepInfo.innerText = "● 解剖學數據分析中";
             
-            // 修正解析度失真：確保畫布解析度與相機影像一致
             if (canvasElement.width !== results.image.width) {
                 canvasElement.width = results.image.width;
                 canvasElement.height = results.image.height;
@@ -66,30 +66,44 @@
             if (results.poseLandmarks) {
                 const landmarks = results.poseLandmarks;
                 
-                // 1. 取得左右肩座標 (MediaPipe 11=左肩, 12=右肩)
-                const L = landmarks[11];
-                const R = landmarks[12];
+                // 2. 邏輯修正 (核心！)：因為是前鏡頭鏡像畫面，
+                // 畫面上偏左邊的點（AI 抓到的實際右肩 12）其實是解剖學上的「受測者左肩」。
+                // 畫面上偏右邊的點（AI 抓到的實際左肩 11）其實是解剖學上的「受測者右肩」。
+                // 我們在此交換代碼，確保 atan2 計算出來的正負號代表真實的解剖學方向。
+                
+                // 解剖學上的左肩點，對應鏡像畫面上的 AI 12 點
+                const Anatomical_L = landmarks[12]; 
+                // 解剖學上的右肩點，對應鏡像畫面上的 AI 11 點
+                const Anatomical_R = landmarks[11]; 
 
-                // 2. 計算夾角 (加上負號是因為畫布 Y 軸向下)
-                const dy = -(L.y - R.y); 
-                const dx = L.x - R.x;
+                // 3. 計算夾角 (加上負號是因為畫布 Y 軸向下)
+                // 正值 = 解剖學左肩高，負值 = 解剖學右肩高
+                const dy = -(Anatomical_L.y - Anatomical_R.y); 
+                const dx = Anatomical_L.x - Anatomical_R.x;
                 const angleDeg = (Math.atan2(dy, dx) * 180 / Math.PI).toFixed(1);
 
-                // 3. 繪製骨架線條
+                // 4. 繪製骨架線條
                 drawConnectors(canvasCtx, landmarks, POSE_CONNECTIONS, {color: '#00FF00', lineWidth: 4});
                 drawLandmarks(canvasCtx, landmarks, {color: '#FF0000', lineWidth: 1, radius: 5});
 
-                // 4. 繪製水平參考線
+                // 5. 繪製水平參考線
                 canvasCtx.beginPath();
                 canvasCtx.setLineDash([15, 15]);
-                canvasCtx.moveTo(0, R.y * canvasElement.height);
-                canvasCtx.lineTo(canvasElement.width, R.y * canvasElement.height);
+                // 使用解剖學右肩高度作為水平基準線
+                canvasCtx.moveTo(0, Anatomical_R.y * canvasElement.height);
+                canvasCtx.lineTo(canvasElement.width, Anatomical_R.y * canvasElement.height);
                 canvasCtx.strokeStyle = 'rgba(255, 255, 0, 0.8)';
                 canvasCtx.lineWidth = 2;
                 canvasCtx.stroke();
 
-                // 5. 即時更新數據文字
-                const side = angleDeg > 1 ? "右肩較高" : (angleDeg < -1 ? "左肩較高" : "肩部水平");
+                // 6. 即時更新數據文字 (判斷解剖學方向)
+                let side = "肩部水平";
+                if (angleDeg > 1.5) {
+                    side = "解剖學：左肩較高"; // 受測者真正的左肩高
+                } else if (angleDeg < -1.5) {
+                    side = "解剖學：右肩較高"; // 受測者真正的右肩高
+                }
+                
                 angleInfo.innerText = `肩部偏移: ${Math.abs(angleDeg)}° (${side})`;
             }
             canvasCtx.restore();
@@ -105,7 +119,7 @@
             btn.style.display = 'none';
             stepInfo.innerText = "● 正在啟動相機...";
             camera.start().then(() => {
-                stepInfo.innerText = "● AI 模型載入中...";
+                stepInfo.innerText = "● 解剖學修正模型載入中...";
             });
         };
     </script>
