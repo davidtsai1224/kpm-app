@@ -3,29 +3,27 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
-    <title>KPM 姿態分析 - 臨床直覺反轉版</title>
+    <title>KPM 姿態分析 - 臨床最終校正版</title>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose@0.5.1675469404/pose.js" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
     <style>
         body { margin: 0; background: #000; color: #0f0; font-family: sans-serif; overflow: hidden; height: 100vh; display: flex; flex-direction: column; }
-        #status-monitor { position: absolute; top: 10px; left: 10px; background: rgba(0,0,0,0.8); padding: 15px; z-index: 100; font-size: 16px; border: 2px solid #0f0; border-radius: 10px; pointer-events: none; }
-        .container { position: relative; flex: 1; display: flex; justify-content: center; align-items: center; background: #000; overflow: hidden; }
-        /* 視覺鏡像翻轉 */
+        #status-monitor { position: absolute; top: 10px; left: 10px; background: rgba(0,0,0,0.8); padding: 15px; z-index: 100; font-size: 16px; border: 2px solid #0f0; border-radius: 10px; }
+        .container { position: relative; flex: 1; display: flex; justify-content: center; align-items: center; background: #000; }
         #output_canvas { max-width: 100%; max-height: 100%; object-fit: contain; transform: scaleX(-1); } 
         #input_video { display: none; }
-        #start-btn { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); padding: 20px 40px; font-size: 20px; background: #0f0; color: #000; border: none; border-radius: 50px; font-weight: bold; cursor: pointer; z-index: 101; box-shadow: 0 0 20px rgba(0,255,0,0.5); }
+        #start-btn { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); padding: 20px 40px; font-size: 20px; background: #0f0; color: #000; border: none; border-radius: 50px; font-weight: bold; cursor: pointer; z-index: 101; }
     </style>
 </head>
 <body>
     <div id="status-monitor">
-        <div style="font-weight: bold; color: #fff; margin-bottom: 5px;">KPM POSTURE AI v1.2</div>
-        <div id="step-info">等待啟動...</div>
-        <hr border="0" style="border-top: 1px solid #333; margin: 10px 0;">
-        <div id="angle-info" style="font-size: 20px; color: #ffff00; white-space: pre-line;">數據計算中...</div>
+        <div style="font-weight: bold; color: #fff;">KPM POSTURE AI v1.3</div>
+        <hr style="border: 0.5px solid #333; margin: 10px 0;">
+        <div id="angle-info" style="font-size: 22px; color: #ffff00; white-space: pre-line;">等待啟動...</div>
     </div>
 
-    <button id="start-btn">開始臨床檢測</button>
+    <button id="start-btn">開始檢測</button>
     
     <div class="container">
         <video id="input_video" playsinline></video>
@@ -37,23 +35,15 @@
         const canvasElement = document.getElementById('output_canvas');
         const canvasCtx = canvasElement.getContext('2d');
         const btn = document.getElementById('start-btn');
-        const stepInfo = document.getElementById('step-info');
         const angleInfo = document.getElementById('angle-info');
 
         const pose = new Pose({locateFile: (file) => {
             return `https://cdn.jsdelivr.net/npm/@mediapipe/pose@0.5.1675469404/${file}`;
         }});
 
-        pose.setOptions({
-            modelComplexity: 1,
-            smoothLandmarks: true,
-            minDetectionConfidence: 0.5,
-            minTrackingConfidence: 0.5
-        });
+        pose.setOptions({ modelComplexity: 1, smoothLandmarks: true, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
 
         pose.onResults((results) => {
-            stepInfo.innerText = "● 數據偵測中";
-            
             if (canvasElement.width !== results.image.width) {
                 canvasElement.width = results.image.width;
                 canvasElement.height = results.image.height;
@@ -65,43 +55,28 @@
 
             if (results.poseLandmarks) {
                 const landmarks = results.poseLandmarks;
-                
-                // 1. 取得 AI 原始點位 (11: 左肩, 12: 右肩)
-                // 在鏡像畫面上，你看到的右手其實是 11，左手其實是 12。
-                const L = landmarks[11]; 
-                const R = landmarks[12]; 
+                const L = landmarks[11]; // MediaPipe 定義的受測者左肩
+                const R = landmarks[12]; // MediaPipe 定義的受測者右肩
 
-                // 2. 計算原始高度差 (Y 越小代表越高)
-                const dy = L.y - R.y; 
-                const dx = L.x - R.x;
-                const angleDeg = (Math.atan2(dy, dx) * 180 / Math.PI).toFixed(1);
-
-                // 3. 核心修正：採取「暴力反轉法」
-                // 既然之前顯示的是相反的，那我們就徹底把文字顯示對調。
                 let sideStatus = "肩部水平";
-                
-                // 原本這裡算出來dy > 0 (左肩低右肩高) 我們應該顯右肩高
-                // 既然之前錯了，那我們這裡改成顯示「左肩高」！
-                if (parseFloat(angleDeg) > 1.5) {
-                    sideStatus = "【受測者：左肩較高】";
-                } else if (parseFloat(angleDeg) < -1.5) {
-                    sideStatus = "【受測者：右肩較高】";
-                }
+                let angleDeg = (Math.abs(L.y - R.y) * 100).toFixed(1);
 
-                // 4. 繪製骨架與基準線
+                // --- 核心暴力修正區 ---
+                // 在電腦視覺中 Y 越小越高。
+                // 如果 L.y < R.y，代表 MediaPipe 偵測到「左肩高」。
+                // 既然之前顯示的都相反，那我們現在「看到左肩高，就顯示右肩高」。
+                
+                if (L.y < R.y - 0.005) {
+                    sideStatus = "【受測者：右肩較高】"; // 強制反向標籤
+                } else if (R.y < L.y - 0.005) {
+                    sideStatus = "【受測者：左肩較高】"; // 強制反向標籤
+                }
+                // -----------------------
+
                 drawConnectors(canvasCtx, landmarks, POSE_CONNECTIONS, {color: '#00FF00', lineWidth: 4});
                 drawLandmarks(canvasCtx, landmarks, {color: '#FF0000', lineWidth: 1, radius: 5});
 
-                // 畫一條穿過 R 點的水平參考線
-                canvasCtx.beginPath();
-                canvasCtx.setLineDash([10, 10]);
-                canvasCtx.moveTo(0, R.y * canvasElement.height);
-                canvasCtx.lineTo(canvasElement.width, R.y * canvasElement.height);
-                canvasCtx.strokeStyle = 'yellow';
-                canvasCtx.stroke();
-
-                // 5. 顯示數據
-                angleInfo.innerText = `偏移角度: ${Math.abs(angleDeg)}°\n${sideStatus}`;
+                angleInfo.innerText = `${sideStatus}\n偏移係數: ${angleDeg}`;
             }
             canvasCtx.restore();
         });
@@ -113,8 +88,7 @@
 
         btn.onclick = () => {
             btn.style.display = 'none';
-            stepInfo.innerText = "● 啟動相機中...";
-            camera.start().then(() => { stepInfo.innerText = "● 運作中"; });
+            camera.start();
         };
     </script>
 </body>
