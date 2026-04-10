@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>KPM 姿態偏移檢測測試</title>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose/pose.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
+  
+  <style>
+    body { margin: 0; display: flex; flex-direction: column; align-items: center; background: #000; color: white; font-family: sans-serif; }
+    .container { position: relative; width: 100vw; height: 80vh; }
+    #input_video { display: none; }
+    #output_canvas { width: 100%; height: 100%; object-fit: contain; }
+    .controls { padding: 20px; }
+  </style>
+</head>
+
+<body>
+  <div class="controls">
+    <h3>靜態姿態偏移 - 核心抓取測試</h3>
+    <p id="status">正在初始化 AI 模型...</p>
+  </div>
+
+  <div class="container">
+    <video id="input_video"></video>
+    <canvas id="output_canvas"></canvas>
+  </div>
+
+  <script type="module">
+    const videoElement = document.getElementById('input_video');
+    const canvasElement = document.getElementById('output_canvas');
+    const canvasCtx = canvasElement.getContext('2d');
+    const statusText = document.getElementById('status');
+
+    function onResults(results) {
+      statusText.innerText = results.poseLandmarks ? "偵測成功！" : "尚未偵測到人體...";
+      
+      canvasCtx.save();
+      canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+      
+      // 繪製影像背景
+      canvasCtx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height);
+
+      if (results.poseLandmarks) {
+        // 繪製骨架連結點
+        drawConnectors(canvasCtx, results.poseLandmarks, POSE_CONNECTIONS, {color: '#00FF00', lineWidth: 4});
+        // 繪製關鍵點
+        drawLandmarks(canvasCtx, results.poseLandmarks, {color: '#FF0000', lineWidth: 2, radius: 5});
+      }
+      canvasCtx.restore();
+    }
+
+    const pose = new Pose({locateFile: (file) => {
+      return `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`;
+    }});
+
+    pose.setOptions({
+      modelComplexity: 1, // iPhone 13 Pro Max 可以開到 2 (精準度更高但較吃資源)
+      smoothLandmarks: true,
+      minDetectionConfidence: 0.5,
+      minTrackingConfidence: 0.5
+    });
+
+    pose.onResults(onResults);
+
+    const camera = new Camera(videoElement, {
+      onFrame: async () => {
+        await pose.send({image: videoElement});
+      },
+      width: 1280,
+      height: 720
+    });
+    camera.start();
+  </script>
+</body>
+</html>
