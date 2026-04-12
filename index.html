@@ -3,7 +3,7 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
-    <title>KPM 正面分析 - 標準化版</title>
+    <title>KPM 正面分析 - 標準化校正版</title>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose@0.5.1675469404/pose.js" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
@@ -19,7 +19,7 @@
         .guide-line { position: absolute; left: 0; width: 100%; border-top: 1px dashed rgba(255, 255, 255, 0.6); z-index: 90; display: flex; justify-content: center; }
         .guide-text { background: rgba(0, 0, 0, 0.5); padding: 2px 10px; font-size: 12px; color: #fff; border-radius: 4px; transform: translateY(-50%); }
         .top-line { top: 20%; }
-        .bottom-line { bottom: 20%; }
+        .bottom-line { bottom: 10%; } /* 拉到 10% 處 */
 
         .risk-low { color: #55ff55; font-weight: bold; }
         .risk-med { color: #ffff55; font-weight: bold; }
@@ -91,7 +91,7 @@
                 const lms = results.poseLandmarks;
                 const L_SH = lms[11], R_SH = lms[12], NOSE = lms[0];
 
-                // 1. 肩部：AI 原始定義
+                // 1. 肩部：AI 原始定義 (L.y - R.y < 0 為左肩高)
                 const s_dy = L_SH.y - R_SH.y;
                 const s_dx = L_SH.x - R_SH.x;
                 const s_abs_angle = Math.abs(Math.atan2(-s_dy, s_dx) * 180 / Math.PI);
@@ -101,7 +101,7 @@
                 if (s_dy < -0.005) s_label = "左肩較高 (Left)";
                 else if (s_dy > 0.005) s_label = "右肩較高 (Right)";
 
-                // 2. 頸部相對夾角
+                // 2. 頸部相對夾角 (採用 1.7 版正確邏輯)
                 const mid_sh_x = (L_SH.x + R_SH.x) / 2;
                 const mid_sh_y = (L_SH.y + R_SH.y) / 2;
                 const sh_angle_rad = Math.atan2(L_SH.y - R_SH.y, L_SH.x - R_SH.x);
@@ -111,6 +111,7 @@
                 let final_neck_angle = 90 + relative_angle_deg;
                 const n_val = smooth(final_neck_angle, nBuffer);
                 
+                // 3. 頸部方向：歪向右邊 X 減少 (回歸 v1.7 定義)
                 let n_label = "頸部中立";
                 if (n_val > 1.5) n_label = "向左偏移 (Left)"; 
                 else if (n_val < -1.5) n_label = "向右偏移 (Right)";
