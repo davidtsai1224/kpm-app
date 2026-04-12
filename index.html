@@ -3,7 +3,7 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
-    <title>KPM 正面分析 - 相對夾角校正版</title>
+    <title>KPM 正面分析 - 頸部方向修正</title>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose@0.5.1675469404/pose.js" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
@@ -80,7 +80,7 @@
                 const lms = results.poseLandmarks;
                 const L_SH = lms[11], R_SH = lms[12], NOSE = lms[0];
 
-                // 1. 肩部：遵循 AI 原始定義 (點位11 Y小則左肩高)
+                // 1. 肩部：原始定義 (L=11, R=12)
                 const s_dy = L_SH.y - R_SH.y;
                 const s_dx = L_SH.x - R_SH.x;
                 const s_abs_angle = Math.abs(Math.atan2(-s_dy, s_dx) * 180 / Math.PI);
@@ -90,28 +90,23 @@
                 if (L_SH.y < R_SH.y - 0.005) s_label = "左肩較高 (Left)";
                 else if (R_SH.y < L_SH.y - 0.005) s_label = "右肩較高 (Right)";
 
-                // 2. 頸部：相對於肩部橫向的夾角
+                // 2. 頸部相對夾角計算
                 const mid_sh_x = (L_SH.x + R_SH.x) / 2;
                 const mid_sh_y = (L_SH.y + R_SH.y) / 2;
                 
-                // 計算肩部連線的角度 (弧度)
                 const sh_angle_rad = Math.atan2(L_SH.y - R_SH.y, L_SH.x - R_SH.x);
-                // 計算頸部連線的角度 (弧度)
                 const neck_angle_rad = Math.atan2(NOSE.y - mid_sh_y, NOSE.x - mid_sh_x);
                 
-                // 相對夾角 = 頸部向量與肩部法線(垂直於肩部)的偏差
-                // 正常中立位應為 90度 (Math.PI/2)
+                // 計算相對偏差量
                 let relative_angle_deg = (neck_angle_rad - sh_angle_rad) * 180 / Math.PI;
-                // 歸一化到 0 為中立
                 let final_neck_angle = 90 + relative_angle_deg;
 
                 const n_val = smooth(final_neck_angle, nBuffer);
                 
-                // 3. 頸部方向：反向於 AI 定義 (符合臨床觀察)
+                // 3. 頸部方向判定文字對調 (相反於上一版)
                 let n_label = "頸部中立";
-                // 這裡根據您的要求將方向邏輯反向
-                if (n_val > 1.5) n_label = "向左偏移 (L)"; 
-                else if (n_val < -1.5) n_label = "向右偏移 (R)";
+                if (n_val < -1.5) n_label = "向左偏移 (L)"; 
+                else if (n_val > 1.5) n_label = "向右偏移 (R)";
 
                 // UI 更新
                 shInfo.innerText = `肩部: ${s_val.toFixed(1)}°\n${s_label}`;
@@ -121,11 +116,10 @@
                 nkRisk.innerText = nRiskData.label;
                 nkRisk.className = nRiskData.class;
 
-                // 繪製
+                // 繪製骨架與連線
                 drawConnectors(canvasCtx, lms, POSE_CONNECTIONS, {color: '#00FF00', lineWidth: 2});
                 drawLandmarks(canvasCtx, lms, {color: '#FF0000', lineWidth: 1, radius: 4});
                 
-                // 頸部連線畫布視覺化
                 canvasCtx.beginPath();
                 canvasCtx.moveTo(mid_sh_x * canvasElement.width, mid_sh_y * canvasElement.height);
                 canvasCtx.lineTo(NOSE.x * canvasElement.width, NOSE.y * canvasElement.height);
