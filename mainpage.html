@@ -20,17 +20,16 @@
         #status-monitor { position: absolute; top: 20px; left: 20px; background: rgba(0,0,0,0.85); padding: 15px; border-radius: 15px; border: 1.5px solid #0f0; z-index: 100; min-width: 220px; }
         .countdown { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); font-size: 150px; color: #fff; z-index: 150; pointer-events: none; display: none; }
         
-        /* 虛線與閃爍紅點 */
+        /* 虛線與紅點 */
         .guide-line { position: absolute; left: 0; width: 100%; border-top: 2px dashed rgba(255,255,255,0.6); z-index: 90; display: flex; justify-content: center; pointer-events: none; }
         .top-line { top: 20%; }
         .bottom-line { bottom: 10%; border-top: 2px dashed rgba(255,100,100,0.6); }
         .guide-text { background: rgba(0, 0, 0, 0.6); padding: 3px 12px; font-size: 13px; color: #fff; border-radius: 5px; transform: translateY(-50%); }
-        
         .red-dot { position: absolute; width: 12px; height: 12px; background-color: #ff0000; border-radius: 50%; box-shadow: 0 0 10px #ff0000; animation: blink 2s infinite ease-in-out; }
         @keyframes blink { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.3; transform: scale(0.8); } }
 
-        /* 距離警告 */
-        #dist-warning { position: absolute; bottom: 15%; color: #ff5555; font-weight: bold; font-size: 20px; display: none; z-index: 110; text-shadow: 0 0 10px #000; background: rgba(0,0,0,0.6); padding: 5px 20px; border-radius: 20px; }
+        #dist-warning { position: absolute; bottom: 15%; color: #ff5555; font-weight: bold; font-size: 20px; display: none; z-index: 110; background: rgba(0,0,0,0.7); padding: 8px 25px; border-radius: 30px; border: 1px solid #ff5555; }
+        #report-img-container img { width: 100%; border: 1px solid #fff; margin-top: 10px; }
     </style>
 </head>
 <body>
@@ -58,7 +57,8 @@
     <div id="dist-warning">⚠️ 請與螢幕保持距離 ⚠️</div>
 
     <div id="status-monitor" style="display:none;">
-        <div id="angle-info" style="font-size: 20px; color: #ffff00;">分析中...</div>
+        <div id="angle-info" style="font-size: 20px; color: #ffff00; margin-bottom: 5px;">分析中...</div>
+        <div id="dist-status" style="font-size: 14px; color: #0f0;">距離狀態: 偵測中</div>
     </div>
 
     <div class="guide-line top-line">
@@ -116,17 +116,23 @@
             if (results.poseLandmarks && currentMode !== 'IDLE') {
                 const lms = results.poseLandmarks;
                 
-                // --- 1. 距離偵測 (估算) ---
-                // 計算肩膀寬度百分比，通常 30cm 處肩寬佔比會大於特定值
+                // --- 距離偵測優化 ---
                 const shWidth = Math.abs(lms[11].x - lms[12].x);
                 const distWarning = document.getElementById('dist-warning');
-                const isTooClose = shWidth > 0.45; // 門檻值：肩寬佔畫面的 45% 以上視為太近
+                const distStatus = document.getElementById('dist-status');
+                
+                // 門檻調整為 0.35 (適中距離)
+                const isTooClose = shWidth > 0.35; 
 
                 if (isTooClose) {
                     distWarning.style.display = 'block';
-                    stabilityCounter = 0; // 太近時重置穩定度，防止錯誤鎖定
+                    distStatus.innerText = "距離狀態: ⚠️ 太近";
+                    distStatus.style.color = "#ff5555";
+                    stabilityCounter = 0;
                 } else {
                     distWarning.style.display = 'none';
+                    distStatus.innerText = "距離狀態: ✅ OK";
+                    distStatus.style.color = "#00ff00";
                 }
 
                 let currentAngle = 0, label = "", modeDisplay = "";
@@ -153,11 +159,11 @@
                 const avgAngle = smaBuffer.reduce((a, b) => a + b, 0) / smaBuffer.length;
                 document.getElementById('angle-info').innerText = `${modeDisplay}: ${Math.abs(avgAngle).toFixed(1)}°\n狀態: ${label}`;
 
-                // 只有在距離正確時才進行穩定度判定
+                // 距離正確才判斷穩定
                 if (!isTooClose) {
-                    if (Math.abs(avgAngle - lastAngle) < (currentMode === 'FRONTAL' ? 0.5 : 1.2)) {
+                    if (Math.abs(avgAngle - lastAngle) < (currentMode === 'FRONTAL' ? 0.4 : 1.0)) {
                         stabilityCounter++;
-                        if (stabilityCounter >= 40 && !isStable) { isStable = true; startCountdown(avgAngle, label); }
+                        if (stabilityCounter >= 35 && !isStable) { isStable = true; startCountdown(avgAngle, label); }
                     } else { if(!isStable) stabilityCounter = 0; }
                 }
                 lastAngle = avgAngle;
