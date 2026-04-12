@@ -3,7 +3,7 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
-    <title>KPM 側面分析 - 測試版</title>
+    <title>KPM 側面分析 - 原始定義版</title>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose@0.5.1675469404/pose.js" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
@@ -15,7 +15,6 @@
         #input_video { display: none; }
         #start-btn { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); padding: 20px 40px; font-size: 20px; background: #0f0; color: #000; border: none; border-radius: 50px; font-weight: bold; cursor: pointer; z-index: 101; }
         
-        /* 標準化參考線 */
         .guide-line { position: absolute; left: 0; width: 100%; border-top: 1px dashed rgba(255, 255, 255, 0.6); z-index: 90; display: flex; justify-content: center; }
         .guide-text { background: rgba(0, 0, 0, 0.5); padding: 2px 10px; font-size: 12px; color: #fff; border-radius: 4px; transform: translateY(-50%); }
         .top-line { top: 20%; }
@@ -28,7 +27,7 @@
 </head>
 <body>
     <div id="status-monitor">
-        <div style="font-weight: bold; color: #fff;">KPM LATERAL ANALYSIS</div>
+        <div style="font-weight: bold; color: #fff;">KPM LATERAL ANALYSIS (RAW)</div>
         <hr style="border: 0.5px solid #333; margin: 10px 0;">
         <div id="lateral-info" style="font-size: 18px; color: #00ffff; margin-bottom: 5px;">側面夾角: 偵測中...</div>
         <div id="lateral-risk" style="font-size: 15px;">風險: --</div>
@@ -84,51 +83,55 @@
             if (results.poseLandmarks) {
                 const lms = results.poseLandmarks;
                 
-                // 判斷受測者是面向左還是面向右 (利用肩膀的 X 座標)
-                // 這裡選取顯示最清楚的那一側
-                const side = lms[11].visibility > lms[12].visibility ? 11 : 12; 
-                const ear = side === 11 ? lms[7] : lms[8]; // 左耳或右耳
-                const shoulder = lms[side];
-
-                // 計算側面夾角：耳部與肩部連線，相對於垂直線的角度
-                const dy = -(ear.y - shoulder.y);
-                const dx = ear.x - shoulder.x;
+                // 1. 自動選取較靠近鏡頭的一側
+                const isLeftVisible = lms[11].visibility > lms[12].visibility;
+                const sideIdx = isLeftVisible ? 11 : 12;
+                const earIdx = isLeftVisible ? 7 : 8;
                 
-                // 計算夾角 (以垂直線為 0 度)
-                // atan2(dx, dy) 當 dx=0 代表完美垂直
-                let angle_rad = Math.atan2(dx, dy);
-                let angle_deg = angle_rad * 180 / Math.PI;
+                const ear = lms[earIdx];
+                const shoulder = lms[sideIdx];
 
+                // 2. 原始座標差 (X 越小越靠近畫面左側)
+                const dx = ear.x - shoulder.x;
+                const dy = -(ear.y - shoulder.y); // Y 軸反向修正
+                
+                // 計算耳部相對於肩部垂直線的夾角
+                let angle_deg = Math.atan2(dx, dy) * 180 / Math.PI;
                 const final_angle = smooth(angle_deg);
                 
-                // 判定前後 (考慮鏡像與側向)
+                // 3. 原始方向判定
                 let direction = "中立";
-                // 這裡的邏輯需要根據您的臨床試驗來校準
-                if (final_angle > 2) direction = "頭部前傾 (Forward)";
-                else if (final_angle < -2) direction = "頭部後傾 (Backward)";
+                // 根據您的診斷事實：歪向您右邊(鏡面左側)時 X 減少
+                // 在側面評估中，如果人面向左側站立，頭部往前伸，耳 X 會減少
+                // 這裡我們直接對比原始 X 差值來判定前後
+                if (final_angle < -2) {
+                    direction = "原始標註：Forward (前傾)";
+                } else if (final_angle > 2) {
+                    direction = "原始標註：Backward (後傾)";
+                }
 
                 latInfo.innerText = `側面夾角: ${Math.abs(final_angle).toFixed(1)}°\n${direction}`;
                 const risk = getRiskLevel(final_angle);
                 latRisk.innerText = risk.label;
                 latRisk.className = risk.class;
 
-                // 繪製
+                // 繪製視覺參考
                 drawConnectors(canvasCtx, lms, POSE_CONNECTIONS, {color: '#00FF00', lineWidth: 2});
                 
-                // 繪製關鍵垂直基準線（通過肩膀）
+                // 通過肩膀的原始垂直線
                 canvasCtx.beginPath();
+                canvasCtx.setLineDash([5, 5]);
                 canvasCtx.moveTo(shoulder.x * canvasElement.width, 0);
                 canvasCtx.lineTo(shoulder.x * canvasElement.width, canvasElement.height);
-                canvasCtx.strokeStyle = 'rgba(255, 255, 0, 0.5)';
-                canvasCtx.setLineDash([5, 5]);
+                canvasCtx.strokeStyle = 'yellow';
                 canvasCtx.stroke();
 
-                // 繪製耳肩連線
+                // 耳肩連線
                 canvasCtx.beginPath();
+                canvasCtx.setLineDash([]);
                 canvasCtx.moveTo(shoulder.x * canvasElement.width, shoulder.y * canvasElement.height);
                 canvasCtx.lineTo(ear.x * canvasElement.width, ear.y * canvasElement.height);
                 canvasCtx.strokeStyle = 'cyan';
-                canvasCtx.setLineDash([]);
                 canvasCtx.lineWidth = 3;
                 canvasCtx.stroke();
             }
