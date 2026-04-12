@@ -1,7 +1,83 @@
-// 在 onResults 函數內加入這段顯示邏輯
-const L = results.poseLandmarks[11]; // 左肩
-const R = results.poseLandmarks[12]; // 右肩
-const N = results.poseLandmarks[0];  // 鼻尖
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+    <title>KPM 座標診斷工具</title>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose@0.5.1675469404/pose.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
+    <style>
+        body { margin: 0; background: #000; color: #0f0; font-family: sans-serif; overflow: hidden; height: 100vh; display: flex; flex-direction: column; }
+        #status-monitor { position: absolute; top: 10px; left: 10px; background: rgba(0,0,0,0.85); padding: 15px; z-index: 100; font-size: 16px; border: 2px solid #0f0; border-radius: 12px; min-width: 280px; }
+        .container { position: relative; flex: 1; display: flex; justify-content: center; align-items: center; background: #000; }
+        #output_canvas { max-width: 100%; max-height: 100%; object-fit: contain; transform: scaleX(-1); } 
+        #input_video { display: none; }
+        #start-btn { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); padding: 20px 40px; font-size: 20px; background: #0f0; color: #000; border: none; border-radius: 50px; font-weight: bold; cursor: pointer; z-index: 101; }
+    </style>
+</head>
+<body>
+    <div id="status-monitor">
+        <div style="font-weight: bold; color: #fff;">KPM COORDINATE DIAGNOSIS</div>
+        <hr style="border: 0.5px solid #333; margin: 10px 0;">
+        <div id="raw-data" style="font-family: monospace; font-size: 18px; color: #ffff00; white-space: pre-line;">等待 AI 點位...</div>
+    </div>
 
-// 直接顯示 X 座標 (0 為左邊緣，1 為右邊緣)
-angleInfo.innerText = `鼻尖 X: ${N.x.toFixed(3)}\n左肩(11) X: ${L.x.toFixed(3)}\n右肩(12) X: ${R.x.toFixed(3)}`;
+    <button id="start-btn">啟動座標偵測</button>
+    
+    <div class="container">
+        <video id="input_video" playsinline></video>
+        <canvas id="output_canvas"></canvas>
+    </div>
+
+    <script type="module">
+        const videoElement = document.getElementById('input_video');
+        const canvasElement = document.getElementById('output_canvas');
+        const canvasCtx = canvasElement.getContext('2d');
+        const btn = document.getElementById('start-btn');
+        const rawDataDisplay = document.getElementById('raw-data');
+
+        const pose = new Pose({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose@0.5.1675469404/${file}`});
+        pose.setOptions({ modelComplexity: 1, smoothLandmarks: true, minDetectionConfidence: 0.6, minTrackingConfidence: 0.6 });
+
+        pose.onResults((results) => {
+            if (canvasElement.width !== results.image.width) {
+                canvasElement.width = results.image.width;
+                canvasElement.height = results.image.height;
+            }
+            canvasCtx.save();
+            canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+            canvasCtx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height);
+
+            if (results.poseLandmarks) {
+                const lms = results.poseLandmarks;
+                const N = lms[0];   // 鼻尖
+                const L = lms[11];  // AI 左肩
+                const R = lms[12];  // AI 右肩
+
+                // 直接顯示原始 X 座標 (0~1 之間)
+                rawDataDisplay.innerText = 
+                    `鼻尖 (Nose 0) X: ${N.x.toFixed(4)}\n` +
+                    `左肩 (L-SH 11) X: ${L.x.toFixed(4)}\n` +
+                    `右肩 (R-SH 12) X: ${R.x.toFixed(4)}\n\n` +
+                    `肩 Y 差 (L-R): ${(L.y - R.y).toFixed(4)}`;
+
+                // 繪製骨架以便確認點位
+                drawConnectors(canvasCtx, lms, POSE_CONNECTIONS, {color: '#00FF00', lineWidth: 2});
+                drawLandmarks(canvasCtx, lms, {color: '#FF0000', lineWidth: 1, radius: 4});
+            }
+            canvasCtx.restore();
+        });
+
+        const camera = new Camera(videoElement, {
+            onFrame: async () => await pose.send({image: videoElement}),
+            width: 1280, height: 720
+        });
+
+        btn.onclick = () => {
+            btn.style.display = 'none';
+            camera.start();
+        };
+    </script>
+</body>
+</html>
