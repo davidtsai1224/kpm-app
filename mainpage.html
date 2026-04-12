@@ -20,10 +20,9 @@
         #status-monitor { position: absolute; top: 20px; left: 20px; background: rgba(0,0,0,0.85); padding: 15px; border-radius: 15px; border: 1.5px solid #0f0; z-index: 100; min-width: 220px; }
         .countdown { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); font-size: 150px; color: #fff; z-index: 150; pointer-events: none; display: none; }
         
-        /* 虛線與紅點 */
         .guide-line { position: absolute; left: 0; width: 100%; border-top: 2px dashed rgba(255,255,255,0.6); z-index: 90; display: flex; justify-content: center; pointer-events: none; }
         .top-line { top: 20%; }
-        .bottom-line { bottom: 10%; border-top: 2px dashed rgba(255,100,100,0.6); }
+        .bottom-line { bottom: 10%; border-top: 2px dashed rgba(100,255,100,0.4); }
         .guide-text { background: rgba(0, 0, 0, 0.6); padding: 3px 12px; font-size: 13px; color: #fff; border-radius: 5px; transform: translateY(-50%); }
         .red-dot { position: absolute; width: 12px; height: 12px; background-color: #ff0000; border-radius: 50%; box-shadow: 0 0 10px #ff0000; animation: blink 2s infinite ease-in-out; }
         @keyframes blink { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.3; transform: scale(0.8); } }
@@ -54,18 +53,18 @@
     </div>
 
     <div id="countdown-display" class="countdown">5</div>
-    <div id="dist-warning">⚠️ 請與螢幕保持距離 ⚠️</div>
+    <div id="dist-warning">⚠️ 偵測不到完整肩膀，請調整位置 ⚠️</div>
 
     <div id="status-monitor" style="display:none;">
         <div id="angle-info" style="font-size: 20px; color: #ffff00; margin-bottom: 5px;">分析中...</div>
-        <div id="dist-status" style="font-size: 14px; color: #0f0;">距離狀態: 偵測中</div>
+        <div id="marker-status" style="font-size: 14px; color: #0f0;">肩膀點位: 偵測中</div>
     </div>
 
     <div class="guide-line top-line">
         <div class="red-dot"></div>
         <span class="guide-text" style="margin-top: 35px;">頭頂請對齊紅點</span>
     </div>
-    <div class="guide-line bottom-line"><span class="guide-text">距離偵測範圍</span></div>
+    <div class="guide-line bottom-line"><span class="guide-text">水平參考基準</span></div>
 
     <div class="container">
         <video id="input_video" playsinline></video>
@@ -116,23 +115,22 @@
             if (results.poseLandmarks && currentMode !== 'IDLE') {
                 const lms = results.poseLandmarks;
                 
-                // --- 距離偵測優化 ---
-                const shWidth = Math.abs(lms[11].x - lms[12].x);
+                // --- 肩膀 Marker 存在判定 ---
+                const markerStatus = document.getElementById('marker-status');
                 const distWarning = document.getElementById('dist-warning');
-                const distStatus = document.getElementById('dist-status');
                 
-                // 門檻調整為 0.35 (適中距離)
-                const isTooClose = shWidth > 0.35; 
+                // 檢查左右肩點位是否都在螢幕內且具備足夠信心值
+                const isShouldersInFrame = (lms[11].visibility > 0.6 && lms[12].visibility > 0.6);
 
-                if (isTooClose) {
+                if (!isShouldersInFrame) {
                     distWarning.style.display = 'block';
-                    distStatus.innerText = "距離狀態: ⚠️ 太近";
-                    distStatus.style.color = "#ff5555";
-                    stabilityCounter = 0;
+                    markerStatus.innerText = "肩膀點位: ❌ 遺失";
+                    markerStatus.style.color = "#ff5555";
+                    stabilityCounter = 0; // 遺失點位時重置
                 } else {
                     distWarning.style.display = 'none';
-                    distStatus.innerText = "距離狀態: ✅ OK";
-                    distStatus.style.color = "#00ff00";
+                    markerStatus.innerText = "肩膀點位: ✅ 正常";
+                    markerStatus.style.color = "#00ff00";
                 }
 
                 let currentAngle = 0, label = "", modeDisplay = "";
@@ -159,9 +157,9 @@
                 const avgAngle = smaBuffer.reduce((a, b) => a + b, 0) / smaBuffer.length;
                 document.getElementById('angle-info').innerText = `${modeDisplay}: ${Math.abs(avgAngle).toFixed(1)}°\n狀態: ${label}`;
 
-                // 距離正確才判斷穩定
-                if (!isTooClose) {
-                    if (Math.abs(avgAngle - lastAngle) < (currentMode === 'FRONTAL' ? 0.4 : 1.0)) {
+                // 只有在肩膀都在螢幕內時才進行穩定度判定
+                if (isShouldersInFrame) {
+                    if (Math.abs(avgAngle - lastAngle) < (currentMode === 'FRONTAL' ? 0.5 : 1.2)) {
                         stabilityCounter++;
                         if (stabilityCounter >= 35 && !isStable) { isStable = true; startCountdown(avgAngle, label); }
                     } else { if(!isStable) stabilityCounter = 0; }
