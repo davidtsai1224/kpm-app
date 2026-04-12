@@ -13,7 +13,7 @@
         #output_canvas { max-width: 100%; max-height: 100%; transform: scaleX(-1); }
         #input_video { display: none; }
         
-        /* 橫向置頂面板：避開瀏海且空間最大化 */
+        /* 橫向置頂面板 */
         #status-monitor { 
             position: absolute; top: 0; left: 0; width: 100%; 
             background: rgba(0, 0, 0, 0.85); display: flex; 
@@ -40,6 +40,9 @@
         .red-dot { position: absolute; width: 12px; height: 12px; background-color: #ff0000; border-radius: 50%; box-shadow: 0 0 10px #ff0000; animation: blink 2s infinite ease-in-out; }
         @keyframes blink { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.3; transform: scale(0.8); } }
         
+        /* 風險說明文字 */
+        .risk-hint { position: absolute; bottom: 12%; width: 100%; text-align: center; color: #fff; font-size: 14px; z-index: 95; text-shadow: 1px 1px 2px #000; pointer-events: none; }
+
         #report-img-container img { width: 100%; border: 1px solid #fff; margin-top: 10px; }
     </style>
 </head>
@@ -58,7 +61,7 @@
 
     <div id="status-monitor" style="display:none;">
         <div class="status-item"><div class="status-label">模式</div><div id="val-mode" class="status-value">---</div></div>
-        <div class="status-item"><div class="status-label">角度</div><div id="val-angle" class="status-value">0.0°</div></div>
+        <div class="status-item"><div class="status-label">量測角度</div><div id="val-angle" class="status-value">0.0°</div></div>
         <div class="status-item"><div class="status-label">姿態判讀</div><div id="val-label" class="status-value">---</div></div>
         <div class="status-item"><div class="status-label">肩膀點位</div><div id="val-marker" class="status-value">偵測中</div></div>
     </div>
@@ -73,8 +76,11 @@
 
     <div id="countdown-display" class="countdown">5</div>
     
-    <div class="guide-line top-line"><div class="red-dot"></div></div>
-    <div class="guide-line bottom-line"></div>
+    <div class="guide-line top-line"><div class="red-dot"></div><span class="guide-text" style="margin-top: 35px;">頭頂請對齊紅點</span></div>
+    
+    <div id="risk-hint-text" class="risk-hint"></div>
+    
+    <div class="guide-line bottom-line"><span class="guide-text">距離偵測範圍</span></div>
 
     <div class="container">
         <video id="input_video" playsinline></video>
@@ -122,36 +128,40 @@
 
             if (results.poseLandmarks && currentMode !== 'IDLE') {
                 const lms = results.poseLandmarks;
-                const isShouldersInFrame = (lms[11].visibility > 0.6 && lms[12].visibility > 0.6);
+                
+                // --- 肩膀點位校正修正：信心值 + 螢幕內座標判定 ---
                 const markerStatus = document.getElementById('val-marker');
+                const s11 = lms[11], s12 = lms[12];
+                const checkValid = (p) => p.x >= 0 && p.x <= 1 && p.y >= 0 && p.y <= 1 && p.visibility > 0.6;
+                const isShouldersInFrame = checkValid(s11) && checkValid(s12);
                 
                 if (!isShouldersInFrame) {
                     markerStatus.innerText = "❌ 遺失"; markerStatus.style.color = "#ff5555";
-                    stabilityCounter = 0;
+                    stabilityCounter = 0; // 暫停並重置
                 } else {
                     markerStatus.innerText = "✅ 正常"; markerStatus.style.color = "#00ff00";
                 }
 
-                let currentAngle = 0, label = "", modeTitle = "";
+                let currentAngle = 0, label = "", modeTitle = "", riskHint = "";
 
                 if (currentMode === 'FRONTAL') {
-                    // 頸肩夾角：眼線 (2-5) vs 肩線 (11-12)
                     const headRad = Math.atan2(lms[5].y - lms[2].y, lms[5].x - lms[2].x);
                     const shRad = Math.atan2(lms[12].y - lms[11].y, lms[12].x - lms[11].x);
                     currentAngle = normalizeAngle((headRad - shRad) * 180 / Math.PI);
-                    label = currentAngle > 1.5 ? "左偏 (L)" : (currentAngle < -1.5 ? "右偏 (R)" : "中立");
+                    label = currentAngle > 1.5 ? "向左偏移 (L)" : (currentAngle < -1.5 ? "向右偏移 (R)" : "頸部中立");
                     modeTitle = "頸肩";
+                    riskHint = "風險評估：低(<5°)、中(5-7.5°)、高(>7.5°)";
                 } else if (currentMode === 'LATERAL') {
-                    // 頸胸夾角：回歸自動判別方向邏輯
                     const side = lms[11].visibility > lms[12].visibility ? 11 : 12;
                     const ear = (side === 11) ? 7 : 8;
                     const dx = lms[ear].x - lms[side].x, dy = -(lms[ear].y - lms[side].y);
                     let rawA = Math.atan2(dx, dy) * 180 / Math.PI;
                     const isFacingLeft = lms[0].x < ((lms[7].x + lms[8].x) / 2);
-                    if (isFacingLeft) label = rawA < -2 ? "前傾 (Fwd)" : "後傾 (Bwd)";
-                    else label = rawA > 2 ? "前傾 (Fwd)" : "後傾 (Bwd)";
+                    if (isFacingLeft) label = rawA < -2 ? "頭部前傾 (Fwd)" : "頭部後傾 (Bwd)";
+                    else label = rawA > 2 ? "頭部前傾 (Fwd)" : "頭部後傾 (Bwd)";
                     currentAngle = rawA;
                     modeTitle = "頸胸";
+                    riskHint = "風險評估：低(<5°)、中(5-15°)、高(>15°)";
                 }
 
                 smaBuffer.push(currentAngle);
@@ -161,7 +171,9 @@
                 document.getElementById('val-mode').innerText = modeTitle;
                 document.getElementById('val-angle').innerText = `${Math.abs(avgAngle).toFixed(1)}°`;
                 document.getElementById('val-label').innerText = label;
+                document.getElementById('risk-hint-text').innerText = riskHint;
 
+                // 只有肩膀「 ✅ 正常」且在螢幕內才進行穩定判定
                 if (isShouldersInFrame) {
                     if (Math.abs(avgAngle - lastAngle) < (currentMode === 'FRONTAL' ? 0.5 : 1.2)) {
                         stabilityCounter++;
@@ -180,7 +192,7 @@
         });
 
         window.startFlow = async () => {
-            btnStart.innerText = "相機啟動中...";
+            btnStart.innerText = "啟動中...";
             try {
                 await camera.start();
                 reportData.name = document.getElementById('patient-name').value;
@@ -190,7 +202,7 @@
                 document.getElementById('step-prepare').style.display = 'none';
                 document.getElementById('status-monitor').style.display = 'flex';
                 currentMode = 'FRONTAL';
-            } catch (err) { alert("相機啟動失敗，請檢查權限設定。"); }
+            } catch (err) { alert("啟動失敗，請確認相機權限。"); }
         };
 
         function startCountdown(angle, label) {
@@ -205,15 +217,22 @@
 
         function captureStep(angle, label) {
             const snapshot = canvasElement.toDataURL("image/jpeg", 0.9);
+            const absA = Math.abs(angle);
+            let riskStr = "正常";
+
             if (currentMode === 'FRONTAL') {
-                reportData.frontal = { img: snapshot, angle: Math.abs(angle).toFixed(1), label: label };
+                if (absA >= 7.5) riskStr = "高風險"; else if (absA >= 5) riskStr = "中風險"; else if (absA >= 2) riskStr = "低風險";
+                reportData.frontal = { img: snapshot, angle: absA.toFixed(1), label: label, risk: riskStr };
                 currentMode = 'IDLE';
                 showModal("正面完成", "請引導個案轉向「側面」。", "進入側面檢測", () => {
                     document.getElementById('step-next-alert').style.display = 'none';
                     currentMode = 'LATERAL'; stabilityCounter = 0; isStable = false;
                 });
             } else {
-                reportData.lateral = { img: snapshot, angle: Math.abs(angle).toFixed(1), label: label };
+                if (label.includes("前傾")) {
+                    if (absA >= 15) riskStr = "高風險"; else if (absA >= 5) riskStr = "中風險"; else riskStr = "低風險";
+                } else { riskStr = "低壓區"; }
+                reportData.lateral = { img: snapshot, angle: absA.toFixed(1), label: label, risk: riskStr };
                 currentMode = 'IDLE'; generateReport();
             }
         }
@@ -244,14 +263,15 @@
             drawBoxedImage(imgF, 40, 210, 340, 480);
             ctx.fillStyle = "#004d40"; ctx.font = "bold 22px sans-serif"; ctx.fillText("【正面：頸肩夾角】", 40, 730);
             ctx.fillStyle = "#333"; ctx.font = "22px sans-serif";
-            ctx.fillText(`偏移狀態: ${reportData.frontal.label}`, 40, 765);
-            ctx.fillText(`量測角度: ${reportData.frontal.angle}°`, 40, 800);
+            ctx.fillText(`狀態: ${reportData.frontal.label}`, 40, 765);
+            ctx.fillText(`角度: ${reportData.frontal.angle}° (${reportData.frontal.risk})`, 40, 800);
 
             const imgL = await loadImg(reportData.lateral.img);
             drawBoxedImage(imgL, 420, 210, 340, 480);
-            ctx.fillStyle = "#004d40"; ctx.fillText("【側面：頸胸夾角】", 420, 730);
-            ctx.fillStyle = "#333"; ctx.fillText(`姿態判讀: ${reportData.lateral.label}`, 420, 765);
-            ctx.fillText(`量測角度: ${reportData.lateral.angle}°`, 420, 800);
+            ctx.fillStyle = "#004d40"; ctx.font = "bold 22px sans-serif"; ctx.fillText("【側面：頸胸夾角】", 420, 730);
+            ctx.fillStyle = "#333"; ctx.font = "22px sans-serif";
+            ctx.fillText(`狀態: ${reportData.lateral.label}`, 420, 765);
+            ctx.fillText(`角度: ${reportData.lateral.angle}° (${reportData.lateral.risk})`, 420, 800);
             
             ctx.fillStyle = "#aaa"; ctx.font = "italic 16px sans-serif"; ctx.fillText("康富物理治療體系 版權所有。", 40, 1160);
 
