@@ -35,6 +35,11 @@
         .guide-line { position: absolute; left: 0; width: 100%; border-top: 2px dashed rgba(255,255,255,0.4); z-index: 90; display: flex; justify-content: center; pointer-events: none; }
         .top-line { top: 20%; }
         .bottom-line { bottom: 10%; border-top: 2px dashed rgba(100,255,100,0.4); }
+        .guide-text { background: rgba(0, 0, 0, 0.6); padding: 3px 12px; font-size: 13px; color: #fff; border-radius: 5px; transform: translateY(-50%); }
+        
+        /* 風險說明文字 */
+        .risk-legend { position: absolute; bottom: 12%; width: 100%; text-align: center; color: #fff; font-size: 14px; z-index: 95; text-shadow: 1px 1px 2px #000; pointer-events: none; }
+
         .red-dot { position: absolute; width: 12px; height: 12px; background-color: #ff0000; border-radius: 50%; box-shadow: 0 0 10px #ff0000; animation: blink 2s infinite ease-in-out; }
         @keyframes blink { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.3; transform: scale(0.8); } }
         
@@ -55,8 +60,8 @@
     </div>
 
     <div id="status-monitor" style="display:none;">
+        <div class="status-item"><div class="status-label">模式</div><div id="val-mode" class="status-value">---</div></div>
         <div class="status-item"><div class="status-label">角度</div><div id="val-angle" class="status-value">0.0°</div></div>
-        <div class="status-item"><div class="status-label">風險</div><div id="val-risk" class="status-value">---</div></div>
         <div class="status-item"><div class="status-label">姿態判讀</div><div id="val-label" class="status-value">---</div></div>
         <div class="status-item"><div class="status-label">肩膀點位</div><div id="val-marker" class="status-value">偵測中</div></div>
     </div>
@@ -71,8 +76,11 @@
 
     <div id="countdown-display" class="countdown">5</div>
     
-    <div class="guide-line top-line"><div class="red-dot"></div></div>
-    <div class="guide-line bottom-line"></div>
+    <div class="guide-line top-line"><div class="red-dot"></div><span class="guide-text" style="margin-top: 35px;">頭頂請對齊紅點</span></div>
+    
+    <div id="risk-legend-ui" class="risk-legend"></div>
+    
+    <div class="guide-line bottom-line"><span class="guide-text">距離偵測範圍</span></div>
 
     <div class="container">
         <video id="input_video" playsinline></video>
@@ -106,22 +114,6 @@
             return angle;
         }
 
-        // 風險邏輯定義
-        function getRiskAssessment(angle, mode, label) {
-            const absA = Math.abs(angle);
-            if (mode === 'FRONTAL') {
-                if (absA >= 10) return { l: "高風險 (High)", c: "#ff5555" };
-                if (absA >= 7.5) return { l: "中風險 (Med)", c: "#ffff55" };
-                if (absA >= 5) return { l: "低風險 (Low)", c: "#55ff55" };
-                return { l: "正常範圍", c: "#00ff00" };
-            } else {
-                if (label.includes("後傾")) return { l: "低壓區", c: "#55ff55" };
-                if (absA >= 15) return { l: "風險: 高 (壓力 2-4 倍)", c: "#ff5555" };
-                if (absA >= 5) return { l: "風險: 中 (負擔增加)", c: "#ffff55" };
-                return { l: "正常範圍", c: "#00ff00" };
-            }
-        }
-
         const pose = new Pose({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose@0.5.1675469404/${file}`});
         pose.setOptions({ modelComplexity: 1, smoothLandmarks: true, minDetectionConfidence: 0.6, minTrackingConfidence: 0.6 });
 
@@ -137,55 +129,56 @@
             if (results.poseLandmarks && currentMode !== 'IDLE') {
                 const lms = results.poseLandmarks;
                 
-                // --- 強化肩膀點位邊界偵測 ---
+                // --- 1. 肩膀點位校正邏輯 ---
                 const markerStatus = document.getElementById('val-marker');
                 const s11 = lms[11], s12 = lms[12];
-                // 檢查是否在螢幕內 (0~1) 且 信心值夠高
-                const isInFrame = (s) => s.x > 0 && s.x < 1 && s.y > 0 && s.y < 1 && s.visibility > 0.6;
-                const isShouldersInFrame = isInFrame(s11) && isInFrame(s12);
+                // 檢查點位是否「在螢幕內 (0~1)」且「信心值達標」
+                const checkInFrame = (p) => p.x >= 0 && p.x <= 1 && p.y >= 0 && p.y <= 1 && p.visibility > 0.6;
+                const isShouldersInFrame = checkInFrame(s11) && checkInFrame(s12);
                 
                 if (!isShouldersInFrame) {
-                    markerStatus.innerText = "❌ 遺失/超出"; markerStatus.style.color = "#ff5555";
-                    stabilityCounter = 0;
+                    markerStatus.innerText = "❌ 遺失"; markerStatus.style.color = "#ff5555";
+                    stabilityCounter = 0; // 暫停穩定度偵測
                 } else {
                     markerStatus.innerText = "✅ 正常"; markerStatus.style.color = "#00ff00";
                 }
 
-                let currentAngle = 0, label = "", modeTitle = "";
+                let currentAngle = 0, label = "", modeTitle = "", riskText = "";
 
                 if (currentMode === 'FRONTAL') {
                     const headRad = Math.atan2(lms[5].y - lms[2].y, lms[5].x - lms[2].x);
                     const shRad = Math.atan2(lms[12].y - lms[11].y, lms[12].x - lms[11].x);
                     currentAngle = normalizeAngle((headRad - shRad) * 180 / Math.PI);
-                    label = currentAngle > 1.5 ? "向左偏移 (L)" : (currentAngle < -1.5 ? "向右偏移 (R)" : "頸部中立");
+                    label = currentAngle > 1.5 ? "左偏 (L)" : (currentAngle < -1.5 ? "右偏 (R)" : "中立");
                     modeTitle = "頸肩";
+                    riskText = "風險評估：低(<5°)、中(5-7.5°)、高(>7.5°)";
                 } else if (currentMode === 'LATERAL') {
                     const side = lms[11].visibility > lms[12].visibility ? 11 : 12;
                     const ear = (side === 11) ? 7 : 8;
                     const dx = lms[ear].x - lms[side].x, dy = -(lms[ear].y - lms[side].y);
                     let rawA = Math.atan2(dx, dy) * 180 / Math.PI;
                     const isFacingLeft = lms[0].x < ((lms[7].x + lms[8].x) / 2);
-                    if (isFacingLeft) label = rawA < -2 ? "頭部前傾 (Fwd)" : "頭部後傾 (Bwd)";
-                    else label = rawA > 2 ? "頭部前傾 (Fwd)" : "頭部後傾 (Bwd)";
+                    if (isFacingLeft) label = rawA < -2 ? "前傾 (Fwd)" : "後傾 (Bwd)";
+                    else label = rawA > 2 ? "前傾 (Fwd)" : "後傾 (Bwd)";
                     currentAngle = rawA;
                     modeTitle = "頸胸";
+                    riskText = "風險評估：低(<5°)、中(5-15°)、高(>15°)";
                 }
 
                 smaBuffer.push(currentAngle);
                 if(smaBuffer.length > 15) smaBuffer.shift();
                 const avgAngle = smaBuffer.reduce((a, b) => a + b, 0) / smaBuffer.length;
                 
-                const risk = getRiskAssessment(avgAngle, currentMode, label);
-                
+                document.getElementById('val-mode').innerText = modeTitle;
                 document.getElementById('val-angle').innerText = `${Math.abs(avgAngle).toFixed(1)}°`;
                 document.getElementById('val-label').innerText = label;
-                document.getElementById('val-risk').innerText = risk.l;
-                document.getElementById('val-risk').style.color = risk.c;
+                document.getElementById('risk-legend-ui').innerText = riskText;
 
+                // 只有肩膀在螢幕內才進行倒數觸發
                 if (isShouldersInFrame) {
                     if (Math.abs(avgAngle - lastAngle) < (currentMode === 'FRONTAL' ? 0.5 : 1.2)) {
                         stabilityCounter++;
-                        if (stabilityCounter >= 40 && !isStable) { isStable = true; startCountdown(avgAngle, label, risk); }
+                        if (stabilityCounter >= 40 && !isStable) { isStable = true; startCountdown(avgAngle, label); }
                     } else { if(!isStable) stabilityCounter = 0; }
                 }
                 lastAngle = avgAngle;
@@ -210,30 +203,36 @@
                 document.getElementById('step-prepare').style.display = 'none';
                 document.getElementById('status-monitor').style.display = 'flex';
                 currentMode = 'FRONTAL';
-            } catch (err) { alert("相機啟動失敗"); }
+            } catch (err) { alert("啟動失敗，請確認相機權限。"); }
         };
 
-        function startCountdown(angle, label, risk) {
+        function startCountdown(angle, label) {
             const cd = document.getElementById('countdown-display');
             cd.style.display = 'block';
             let timer = 5; cd.innerText = timer;
             let itv = setInterval(() => {
                 timer--; cd.innerText = timer;
-                if (timer <= 0) { clearInterval(itv); cd.style.display = 'none'; captureStep(angle, label, risk); }
+                if (timer <= 0) { clearInterval(itv); cd.style.display = 'none'; captureStep(angle, label); }
             }, 1000);
         }
 
-        function captureStep(angle, label, risk) {
+        function captureStep(angle, label) {
             const snapshot = canvasElement.toDataURL("image/jpeg", 0.9);
+            const absA = Math.abs(angle);
+            let riskL = "正常";
             if (currentMode === 'FRONTAL') {
-                reportData.frontal = { img: snapshot, angle: Math.abs(angle).toFixed(1), label: label, risk: risk.l };
+                if (absA >= 7.5) riskL = "高風險"; else if (absA >= 5) riskL = "中風險"; else if (absA >= 2) riskL = "低風險";
+                reportData.frontal = { img: snapshot, angle: absA.toFixed(1), label: label, risk: riskL };
                 currentMode = 'IDLE';
                 showModal("正面完成", "請引導個案轉向「側面」。", "進入側面檢測", () => {
                     document.getElementById('step-next-alert').style.display = 'none';
                     currentMode = 'LATERAL'; stabilityCounter = 0; isStable = false;
                 });
             } else {
-                reportData.lateral = { img: snapshot, angle: Math.abs(angle).toFixed(1), label: label, risk: risk.l };
+                if (label.includes("前傾")) {
+                    if (absA >= 15) riskL = "高風險"; else if (absA >= 5) riskL = "中風險"; else riskL = "低風險";
+                } else { riskL = "低壓區"; }
+                reportData.lateral = { img: snapshot, angle: absA.toFixed(1), label: label, risk: riskL };
                 currentMode = 'IDLE'; generateReport();
             }
         }
@@ -264,17 +263,14 @@
             drawBoxedImage(imgF, 40, 210, 340, 480);
             ctx.fillStyle = "#004d40"; ctx.font = "bold 22px sans-serif"; ctx.fillText("【正面：頸肩夾角】", 40, 730);
             ctx.fillStyle = "#333"; ctx.font = "22px sans-serif";
-            ctx.fillText(`狀態: ${reportData.frontal.label}`, 40, 765);
-            ctx.fillText(`角度: ${reportData.frontal.angle}°`, 40, 800);
-            ctx.fillStyle = "#d32f2f"; ctx.fillText(`風險評估: ${reportData.frontal.risk}`, 40, 835);
+            ctx.fillText(`偏移狀態: ${reportData.frontal.label}`, 40, 765);
+            ctx.fillText(`量測角度: ${reportData.frontal.angle}° (${reportData.frontal.risk})`, 40, 800);
 
             const imgL = await loadImg(reportData.lateral.img);
             drawBoxedImage(imgL, 420, 210, 340, 480);
-            ctx.fillStyle = "#004d40"; ctx.font = "bold 22px sans-serif"; ctx.fillText("【側面：頸胸夾角】", 420, 730);
-            ctx.fillStyle = "#333"; ctx.font = "22px sans-serif";
-            ctx.fillText(`狀態: ${reportData.lateral.label}`, 420, 765);
-            ctx.fillText(`角度: ${reportData.lateral.angle}°`, 420, 800);
-            ctx.fillStyle = "#d32f2f"; ctx.fillText(`${reportData.lateral.risk}`, 420, 835);
+            ctx.fillStyle = "#004d40"; ctx.fillText("【側面：頸胸夾角】", 420, 730);
+            ctx.fillStyle = "#333"; ctx.fillText(`姿態判讀: ${reportData.lateral.label}`, 420, 765);
+            ctx.fillText(`量測角度: ${reportData.lateral.angle}° (${reportData.lateral.risk})`, 420, 800);
             
             ctx.fillStyle = "#aaa"; ctx.font = "italic 16px sans-serif"; ctx.fillText("康富物理治療體系 版權所有。", 40, 1160);
 
