@@ -25,7 +25,6 @@
         .guide-text { background: rgba(0, 0, 0, 0.6); padding: 3px 12px; font-size: 13px; color: #fff; border-radius: 5px; transform: translateY(-50%); }
         .red-dot { position: absolute; width: 12px; height: 12px; background-color: #ff0000; border-radius: 50%; box-shadow: 0 0 10px #ff0000; animation: blink 2s infinite ease-in-out; }
         @keyframes blink { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.3; transform: scale(0.8); } }
-        #dist-warning { position: absolute; bottom: 15%; color: #ff5555; font-weight: bold; font-size: 20px; display: none; z-index: 110; background: rgba(0,0,0,0.7); padding: 8px 25px; border-radius: 30px; border: 1px solid #ff5555; }
         #report-img-container img { width: 100%; border: 1px solid #fff; margin-top: 10px; }
     </style>
 </head>
@@ -38,7 +37,7 @@
             <input type="text" id="patient-name" placeholder="個案姓名" value="蔡忠憲">
             <input type="text" id="patient-id" placeholder="序號" value="001">
             <br>
-            <button onclick="startFlow()">開始檢測</button>
+            <button id="btn-start" onclick="startFlow()">開始檢測流程</button>
         </div>
     </div>
 
@@ -51,7 +50,6 @@
     </div>
 
     <div id="countdown-display" class="countdown">5</div>
-    <div id="dist-warning">⚠️ 偵測不到完整肩膀，請調整位置 ⚠️</div>
 
     <div id="status-monitor" style="display:none;">
         <div id="angle-info" style="font-size: 20px; color: #ffff00; margin-bottom: 5px;">分析中...</div>
@@ -84,29 +82,20 @@
         const videoElement = document.getElementById('input_video');
         const canvasElement = document.getElementById('output_canvas');
         const canvasCtx = canvasElement.getContext('2d');
+        const btnStart = document.getElementById('btn-start');
         
         let currentMode = 'IDLE', isStable = false, stabilityCounter = 0, lastAngle = 0;
         let smaBuffer = [], reportData = { name: "", id: "", date: "", frontal: null, lateral: null }, finalBlob = null;
 
-        window.startFlow = () => {
-            reportData.name = document.getElementById('patient-name').value;
-            reportData.id = document.getElementById('patient-id').value;
-            const now = new Date();
-            reportData.date = now.getFullYear() + String(now.getMonth()+1).padStart(2,'0') + String(now.getDate()).padStart(2,'0');
-            document.getElementById('step-prepare').style.display = 'none';
-            document.getElementById('status-monitor').style.display = 'block';
-            currentMode = 'FRONTAL';
-        };
-
-        const pose = new Pose({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose@0.5.1675469404/${file}`});
-        pose.setOptions({ modelComplexity: 1, smoothLandmarks: true, minDetectionConfidence: 0.6, minTrackingConfidence: 0.6 });
-
-        // 角度規一化函式：確保夾角在 -180 到 180 之間，並處理跳轉問題
+        // 角度規一化函式 (解決 200-300 度跳轉問題)
         function normalizeAngle(angle) {
             while (angle > 180) angle -= 360;
             while (angle < -180) angle += 360;
             return angle;
         }
+
+        const pose = new Pose({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose@0.5.1675469404/${file}`});
+        pose.setOptions({ modelComplexity: 1, smoothLandmarks: true, minDetectionConfidence: 0.6, minTrackingConfidence: 0.6 });
 
         pose.onResults((results) => {
             if (canvasElement.width !== results.image.width) {
@@ -120,27 +109,165 @@
             if (results.poseLandmarks && currentMode !== 'IDLE') {
                 const lms = results.poseLandmarks;
                 const markerStatus = document.getElementById('marker-status');
-                const distWarning = document.getElementById('dist-warning');
                 const isShouldersInFrame = (lms[11].visibility > 0.6 && lms[12].visibility > 0.6);
 
                 if (!isShouldersInFrame) {
-                    distWarning.style.display = 'block';
                     markerStatus.innerText = "肩膀點位: ❌ 遺失";
                     markerStatus.style.color = "#ff5555";
                     stabilityCounter = 0;
                 } else {
-                    distWarning.style.display = 'none';
                     markerStatus.innerText = "肩膀點位: ✅ 正常";
                     markerStatus.style.color = "#00ff00";
                 }
 
                 let currentAngle = 0, label = "", modeDisplay = "";
                 if (currentMode === 'FRONTAL') {
-                    // 頸肩夾角修正：使用 normalizeAngle 處理相減
                     const headRad = Math.atan2(lms[5].y - lms[2].y, lms[5].x - lms[2].x);
                     const shRad = Math.atan2(lms[12].y - lms[11].y, lms[12].x - lms[11].x);
-                    let diff = (headRad - shRad) * 180 / Math.PI;
-                    currentAngle = normalizeAngle(diff);
+                    currentAngle = normalizeAngle((headRad - shRad) * 180 / Math.PI);
                     label = currentAngle > 1.5 ? "左偏 (L)" : (currentAngle < -1.5 ? "右偏 (R)" : "中立");
                     modeDisplay = "頸肩夾角";
-                } else if (currentMode === 'LATERAL')
+                } else if (currentMode === 'LATERAL') {
+                    const side = lms[11].visibility > lms[12].visibility ? 11 : 12;
+                    const ear = (side === 11) ? 7 : 8;
+                    const dx = lms[ear].x - lms[side].x, dy = -(lms[ear].y - lms[side].y);
+                    let rawA = Math.atan2(dx, dy) * 180 / Math.PI;
+                    const isFacingLeft = lms[0].x < ((lms[7].x + lms[8].x) / 2);
+                    if (isFacingLeft) label = rawA < -2 ? "前傾 (Fwd)" : "後傾 (Bwd)";
+                    else label = rawA > 2 ? "前傾 (Fwd)" : "後傾 (Bwd)";
+                    currentAngle = rawA;
+                    modeDisplay = "頸胸夾角";
+                }
+
+                smaBuffer.push(currentAngle);
+                if(smaBuffer.length > 15) smaBuffer.shift();
+                const avgAngle = smaBuffer.reduce((a, b) => a + b, 0) / smaBuffer.length;
+                document.getElementById('angle-info').innerText = `${modeDisplay}: ${Math.abs(avgAngle).toFixed(1)}°\n狀態: ${label}`;
+
+                if (isShouldersInFrame) {
+                    if (Math.abs(avgAngle - lastAngle) < (currentMode === 'FRONTAL' ? 0.5 : 1.2)) {
+                        stabilityCounter++;
+                        if (stabilityCounter >= 40 && !isStable) { isStable = true; startCountdown(avgAngle, label); }
+                    } else { if(!isStable) stabilityCounter = 0; }
+                }
+                lastAngle = avgAngle;
+                drawConnectors(canvasCtx, lms, POSE_CONNECTIONS, {color: '#00FF00', lineWidth: 2});
+            }
+            canvasCtx.restore();
+        });
+
+        // 修改啟動流程：先啟動相機再切換 UI
+        const camera = new Camera(videoElement, {
+            onFrame: async () => { await pose.send({image: videoElement}); },
+            width: 1280, height: 720
+        });
+
+        window.startFlow = async () => {
+            btnStart.disabled = true;
+            btnStart.innerText = "相機啟動中...";
+            
+            try {
+                await camera.start();
+                reportData.name = document.getElementById('patient-name').value;
+                reportData.id = document.getElementById('patient-id').value;
+                const now = new Date();
+                reportData.date = now.getFullYear() + String(now.getMonth()+1).padStart(2,'0') + String(now.getDate()).padStart(2,'0');
+                document.getElementById('step-prepare').style.display = 'none';
+                document.getElementById('status-monitor').style.display = 'block';
+                currentMode = 'FRONTAL';
+            } catch (err) {
+                alert("相機啟動失敗，請確保已授權相機權限並重新整理。");
+                btnStart.disabled = false;
+                btnStart.innerText = "重新啟動檢測";
+            }
+        };
+
+        function startCountdown(angle, label) {
+            const cd = document.getElementById('countdown-display');
+            cd.style.display = 'block';
+            let timer = 5; cd.innerText = timer;
+            let itv = setInterval(() => {
+                timer--; cd.innerText = timer;
+                if (timer <= 0) { clearInterval(itv); cd.style.display = 'none'; captureStep(angle, label); }
+            }, 1000);
+        }
+
+        function captureStep(angle, label) {
+            const snapshot = canvasElement.toDataURL("image/jpeg", 0.9);
+            if (currentMode === 'FRONTAL') {
+                reportData.frontal = { img: snapshot, angle: Math.abs(angle).toFixed(1), label: label };
+                currentMode = 'IDLE';
+                showModal("正面完成", "請引導個案轉向「側面」。", "進入側面檢測", () => {
+                    document.getElementById('step-next-alert').style.display = 'none';
+                    currentMode = 'LATERAL'; stabilityCounter = 0; isStable = false;
+                });
+            } else {
+                reportData.lateral = { img: snapshot, angle: Math.abs(angle).toFixed(1), label: label };
+                currentMode = 'IDLE'; generateReport();
+            }
+        }
+
+        async function generateReport() {
+            const c = document.getElementById('report-gen-canvas');
+            const ctx = c.getContext('2d');
+            ctx.fillStyle = "white"; ctx.fillRect(0,0,800,1200);
+            ctx.fillStyle = "#004d40"; ctx.fillRect(0,0,800,110);
+            ctx.fillStyle = "white"; ctx.font = "bold 38px sans-serif"; ctx.fillText("康富物理治療檢測報告", 40, 70);
+            ctx.fillStyle = "#333"; ctx.font = "22px sans-serif";
+            ctx.fillText(`個案姓名: ${reportData.name}`, 40, 160);
+            ctx.fillText(`檢測序號: ${reportData.id}`, 320, 160);
+            ctx.fillText(`日期: ${reportData.date}`, 580, 160);
+            
+            const loadImg = (src) => new Promise(res => { const i = new Image(); i.onload = () => res(i); i.src = src; });
+            const drawBoxedImage = (img, x, y, w, h) => {
+                const imgAspect = img.width / img.height;
+                let drawW = w, drawH = w / imgAspect;
+                if (drawH > h) { drawH = h; drawW = h * imgAspect; }
+                const offsetX = x + (w - drawW) / 2;
+                const offsetY = y + (h - drawH) / 2;
+                ctx.strokeStyle = "#444"; ctx.lineWidth = 2; ctx.strokeRect(offsetX-2, offsetY-2, drawW+4, drawH+4);
+                ctx.drawImage(img, offsetX, offsetY, drawW, drawH);
+            };
+
+            const imgF = await loadImg(reportData.frontal.img);
+            drawBoxedImage(imgF, 40, 210, 340, 480);
+            ctx.fillStyle = "#004d40"; ctx.font = "bold 22px sans-serif"; ctx.fillText("【正面：頸肩夾角】", 40, 730);
+            ctx.fillStyle = "#333"; ctx.font = "22px sans-serif";
+            ctx.fillText(`偏移狀態: ${reportData.frontal.label}`, 40, 765);
+            ctx.fillText(`量測角度: ${reportData.frontal.angle}°`, 40, 800);
+
+            const imgL = await loadImg(reportData.lateral.img);
+            drawBoxedImage(imgL, 420, 210, 340, 480);
+            ctx.fillStyle = "#004d40"; ctx.fillText("【側面：頸胸夾角】", 420, 730);
+            ctx.fillStyle = "#333"; ctx.fillText(`姿態判讀: ${reportData.lateral.label}`, 420, 765);
+            ctx.fillText(`量測角度: ${reportData.lateral.angle}°`, 420, 800);
+            
+            ctx.fillStyle = "#aaa"; ctx.font = "italic 16px sans-serif"; ctx.fillText("康富物理治療體系 版權所有。", 40, 1160);
+
+            const finalDataUrl = c.toDataURL("image/jpeg", 0.9);
+            const reportImg = new Image(); reportImg.src = finalDataUrl;
+            document.getElementById('report-img-container').innerHTML = '';
+            document.getElementById('report-img-container').appendChild(reportImg);
+            document.getElementById('report-preview-layer').style.display = 'flex';
+            const res = await fetch(finalDataUrl); finalBlob = await res.blob();
+        }
+
+        window.shareReport = async () => {
+            const fileName = `${reportData.date}-${reportData.name}-${reportData.id}.jpg`;
+            const file = new File([finalBlob], fileName, { type: 'image/jpeg' });
+            if (navigator.canShare && navigator.canShare({ files: [file] })) {
+                try { await navigator.share({ files: [file], title: '康富檢測報告', text: `${reportData.name} 檢測報告` }); }
+                catch (err) { }
+            } else { alert("長按圖片儲存影像。"); }
+        };
+
+        function showModal(t, m, b, a) {
+            document.getElementById('next-title').innerText = t;
+            document.getElementById('next-msg').innerText = m;
+            const btn = document.getElementById('next-btn');
+            btn.innerText = b; btn.onclick = a;
+            document.getElementById('step-next-alert').style.display = 'flex';
+        }
+    </script>
+</body>
+</html>
