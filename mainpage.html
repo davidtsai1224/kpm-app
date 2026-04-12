@@ -17,13 +17,20 @@
         h2 { color: #fff; margin: 10px 0; }
         input { background: #333; border: 1px solid #0f0; color: #fff; padding: 12px; border-radius: 8px; font-size: 18px; width: 85%; margin: 10px 0; }
         button { background: #0f0; color: #000; border: none; padding: 15px 30px; font-size: 18px; font-weight: bold; border-radius: 50px; cursor: pointer; margin: 5px; }
-        #status-monitor { position: absolute; top: 20px; left: 20px; background: rgba(0,0,0,0.85); padding: 15px; border-radius: 15px; border: 1.5px solid #0f0; z-index: 100; }
+        #status-monitor { position: absolute; top: 20px; left: 20px; background: rgba(0,0,0,0.85); padding: 15px; border-radius: 15px; border: 1.5px solid #0f0; z-index: 100; min-width: 220px; }
         .countdown { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); font-size: 150px; color: #fff; z-index: 150; pointer-events: none; display: none; }
+        
+        /* 虛線與閃爍紅點 */
         .guide-line { position: absolute; left: 0; width: 100%; border-top: 2px dashed rgba(255,255,255,0.6); z-index: 90; display: flex; justify-content: center; pointer-events: none; }
-        .guide-text { background: rgba(0, 0, 0, 0.6); padding: 3px 12px; font-size: 13px; color: #fff; border-radius: 5px; transform: translateY(-50%); }
         .top-line { top: 20%; }
-        .bottom-line { bottom: 10%; }
-        #report-img-container img { width: 100%; border: 1px solid #fff; margin-top: 10px; }
+        .bottom-line { bottom: 10%; border-top: 2px dashed rgba(255,100,100,0.6); }
+        .guide-text { background: rgba(0, 0, 0, 0.6); padding: 3px 12px; font-size: 13px; color: #fff; border-radius: 5px; transform: translateY(-50%); }
+        
+        .red-dot { position: absolute; width: 12px; height: 12px; background-color: #ff0000; border-radius: 50%; box-shadow: 0 0 10px #ff0000; animation: blink 2s infinite ease-in-out; }
+        @keyframes blink { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.3; transform: scale(0.8); } }
+
+        /* 距離警告 */
+        #dist-warning { position: absolute; bottom: 15%; color: #ff5555; font-weight: bold; font-size: 20px; display: none; z-index: 110; text-shadow: 0 0 10px #000; background: rgba(0,0,0,0.6); padding: 5px 20px; border-radius: 20px; }
     </style>
 </head>
 <body>
@@ -31,11 +38,11 @@
     <div id="step-prepare" class="overlay">
         <div class="modal">
             <h2 style="color:#0f0">康富物理治療檢測</h2>
-            <p style="color:#ccc">請輸入個案資訊</p>
+            <p style="color:#ccc">個案資訊登錄</p>
             <input type="text" id="patient-name" placeholder="個案姓名" value="蔡忠憲">
             <input type="text" id="patient-id" placeholder="序號" value="001">
             <br>
-            <button onclick="startFlow()">開始檢測流程</button>
+            <button onclick="startFlow()">開始檢測</button>
         </div>
     </div>
 
@@ -48,14 +55,17 @@
     </div>
 
     <div id="countdown-display" class="countdown">5</div>
+    <div id="dist-warning">⚠️ 請與螢幕保持距離 ⚠️</div>
 
     <div id="status-monitor" style="display:none;">
-        <div style="font-weight:bold; font-size:20px; color:#0f0; margin-bottom:5px;">KPM 檢測系統</div>
-        <div id="angle-info" style="font-size: 18px; color: #ffff00;">分析中...</div>
+        <div id="angle-info" style="font-size: 20px; color: #ffff00;">分析中...</div>
     </div>
 
-    <div class="guide-line top-line"><span class="guide-text">頭頂部對齊線</span></div>
-    <div class="guide-line bottom-line"><span class="guide-text">請至少保持 30 公分距離</span></div>
+    <div class="guide-line top-line">
+        <div class="red-dot"></div>
+        <span class="guide-text" style="margin-top: 35px;">頭頂請對齊紅點</span>
+    </div>
+    <div class="guide-line bottom-line"><span class="guide-text">距離偵測範圍</span></div>
 
     <div class="container">
         <video id="input_video" playsinline></video>
@@ -68,7 +78,6 @@
         <div class="modal">
             <h2 style="color:#0f0">個案檢測報告</h2>
             <div id="report-img-container"></div>
-            <p style="color:#ffff00; font-size: 14px; margin-top:10px;">請點擊按鈕選擇「儲存影像」存入相簿</p>
             <button onclick="shareReport()">儲存 / 分享報告圖</button>
             <button onclick="location.reload()" style="background:#444; color:white;">完成</button>
         </div>
@@ -79,17 +88,12 @@
         const canvasElement = document.getElementById('output_canvas');
         const canvasCtx = canvasElement.getContext('2d');
         
-        let currentMode = 'IDLE';
-        let isStable = false;
-        let stabilityCounter = 0;
-        let lastAngle = 0;
-        let smaBuffer = [];
-        let reportData = { name: "", id: "", date: "", frontal: null, lateral: null };
-        let finalBlob = null;
+        let currentMode = 'IDLE', isStable = false, stabilityCounter = 0, lastAngle = 0;
+        let smaBuffer = [], reportData = { name: "", id: "", date: "", frontal: null, lateral: null }, finalBlob = null;
 
         window.startFlow = () => {
-            reportData.name = document.getElementById('patient-name').value || "個案";
-            reportData.id = document.getElementById('patient-id').value || "001";
+            reportData.name = document.getElementById('patient-name').value;
+            reportData.id = document.getElementById('patient-id').value;
             const now = new Date();
             reportData.date = now.getFullYear() + String(now.getMonth()+1).padStart(2,'0') + String(now.getDate()).padStart(2,'0');
             document.getElementById('step-prepare').style.display = 'none';
@@ -111,17 +115,28 @@
 
             if (results.poseLandmarks && currentMode !== 'IDLE') {
                 const lms = results.poseLandmarks;
-                let currentAngle = 0, label = "", modeDisplay = "";
+                
+                // --- 1. 距離偵測 (估算) ---
+                // 計算肩膀寬度百分比，通常 30cm 處肩寬佔比會大於特定值
+                const shWidth = Math.abs(lms[11].x - lms[12].x);
+                const distWarning = document.getElementById('dist-warning');
+                const isTooClose = shWidth > 0.45; // 門檻值：肩寬佔畫面的 45% 以上視為太近
 
+                if (isTooClose) {
+                    distWarning.style.display = 'block';
+                    stabilityCounter = 0; // 太近時重置穩定度，防止錯誤鎖定
+                } else {
+                    distWarning.style.display = 'none';
+                }
+
+                let currentAngle = 0, label = "", modeDisplay = "";
                 if (currentMode === 'FRONTAL') {
-                    // 頸肩夾角：Marker 2 & 5 連線 vs Marker 11 & 12 連線
                     const headRad = Math.atan2(lms[5].y - lms[2].y, lms[5].x - lms[2].x);
                     const shRad = Math.atan2(lms[12].y - lms[11].y, lms[12].x - lms[11].x);
                     currentAngle = (headRad - shRad) * 180 / Math.PI;
                     label = currentAngle > 1.5 ? "左偏 (L)" : (currentAngle < -1.5 ? "右偏 (R)" : "中立");
                     modeDisplay = "頸肩夾角";
                 } else if (currentMode === 'LATERAL') {
-                    // 頸胸夾角：垂直線 vs 耳肩連線 (7-11 或 8-12)
                     const side = lms[11].visibility > lms[12].visibility ? 11 : 12;
                     const ear = (side === 11) ? 7 : 8;
                     const dx = lms[ear].x - lms[side].x, dy = -(lms[ear].y - lms[side].y);
@@ -138,11 +153,13 @@
                 const avgAngle = smaBuffer.reduce((a, b) => a + b, 0) / smaBuffer.length;
                 document.getElementById('angle-info').innerText = `${modeDisplay}: ${Math.abs(avgAngle).toFixed(1)}°\n狀態: ${label}`;
 
-                const threshold = (currentMode === 'FRONTAL' ? 0.5 : 1.2);
-                if (Math.abs(avgAngle - lastAngle) < threshold) {
-                    stabilityCounter++;
-                    if (stabilityCounter >= 40 && !isStable) { isStable = true; startCountdown(avgAngle, label); }
-                } else { if(!isStable) stabilityCounter = 0; }
+                // 只有在距離正確時才進行穩定度判定
+                if (!isTooClose) {
+                    if (Math.abs(avgAngle - lastAngle) < (currentMode === 'FRONTAL' ? 0.5 : 1.2)) {
+                        stabilityCounter++;
+                        if (stabilityCounter >= 40 && !isStable) { isStable = true; startCountdown(avgAngle, label); }
+                    } else { if(!isStable) stabilityCounter = 0; }
+                }
                 lastAngle = avgAngle;
                 drawConnectors(canvasCtx, lms, POSE_CONNECTIONS, {color: '#00FF00', lineWidth: 2});
             }
@@ -184,7 +201,7 @@
             ctx.fillText(`個案姓名: ${reportData.name}`, 40, 160);
             ctx.fillText(`檢測序號: ${reportData.id}`, 320, 160);
             ctx.fillText(`日期: ${reportData.date}`, 580, 160);
-
+            
             const loadImg = (src) => new Promise(res => { const i = new Image(); i.onload = () => res(i); i.src = src; });
             const drawBoxedImage = (img, x, y, w, h) => {
                 const imgAspect = img.width / img.height;
@@ -198,22 +215,18 @@
 
             const imgF = await loadImg(reportData.frontal.img);
             drawBoxedImage(imgF, 40, 210, 340, 480);
-            ctx.fillStyle = "#004d40"; ctx.font = "bold 22px sans-serif";
-            ctx.fillText("【正面：頸肩夾角】", 40, 730);
+            ctx.fillStyle = "#004d40"; ctx.font = "bold 22px sans-serif"; ctx.fillText("【正面：頸肩夾角】", 40, 730);
             ctx.fillStyle = "#333"; ctx.font = "22px sans-serif";
             ctx.fillText(`偏移狀態: ${reportData.frontal.label}`, 40, 765);
             ctx.fillText(`量測角度: ${reportData.frontal.angle}°`, 40, 800);
 
             const imgL = await loadImg(reportData.lateral.img);
             drawBoxedImage(imgL, 420, 210, 340, 480);
-            ctx.fillStyle = "#004d40"; ctx.font = "bold 22px sans-serif";
-            ctx.fillText("【側面：頸胸夾角】", 420, 730);
-            ctx.fillStyle = "#333"; ctx.font = "22px sans-serif";
-            ctx.fillText(`姿態判讀: ${reportData.lateral.label}`, 420, 765);
+            ctx.fillStyle = "#004d40"; ctx.fillText("【側面：頸胸夾角】", 420, 730);
+            ctx.fillStyle = "#333"; ctx.fillText(`姿態判讀: ${reportData.lateral.label}`, 420, 765);
             ctx.fillText(`量測角度: ${reportData.lateral.angle}°`, 420, 800);
             
-            ctx.fillStyle = "#aaa"; ctx.font = "italic 16px sans-serif";
-            ctx.fillText("本檢測由 KPM 系統生成。請點擊按鈕儲存影像。", 40, 1160);
+            ctx.fillStyle = "#aaa"; ctx.font = "italic 16px sans-serif"; ctx.fillText("康富物理治療體系 版權所有。", 40, 1160);
 
             const finalDataUrl = c.toDataURL("image/jpeg", 0.9);
             const reportImg = new Image(); reportImg.src = finalDataUrl;
@@ -227,9 +240,9 @@
             const fileName = `${reportData.date}-${reportData.name}-${reportData.id}.jpg`;
             const file = new File([finalBlob], fileName, { type: 'image/jpeg' });
             if (navigator.canShare && navigator.canShare({ files: [file] })) {
-                try { await navigator.share({ files: [file], title: '康富檢測報告', text: `${reportData.name} 報告書` }); }
-                catch (err) { console.log('Share cancel'); }
-            } else { alert("請長按圖片儲存。"); }
+                try { await navigator.share({ files: [file], title: '康富檢測報告', text: `${reportData.name} 檢測報告` }); }
+                catch (err) { }
+            } else { alert("長按圖片儲存影像。"); }
         };
 
         function showModal(t, m, b, a) {
