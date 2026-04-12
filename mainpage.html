@@ -12,22 +12,35 @@
         .container { position: relative; width: 100vw; height: 100vh; display: flex; justify-content: center; align-items: center; }
         #output_canvas { max-width: 100%; max-height: 100%; transform: scaleX(-1); }
         #input_video { display: none; }
-        .overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; display: flex; flex-direction: column; justify-content: center; align-items: center; background: rgba(0,0,0,0.95); z-index: 200; text-align: center; padding: 20px; box-sizing: border-box; }
-        .modal { background: #1a1a1a; border: 2px solid #0f0; border-radius: 24px; padding: 25px; max-width: 500px; width: 95%; }
-        h2 { color: #fff; margin: 10px 0; }
-        input { background: #333; border: 1px solid #0f0; color: #fff; padding: 12px; border-radius: 8px; font-size: 18px; width: 85%; margin: 10px 0; }
-        button { background: #0f0; color: #000; border: none; padding: 15px 30px; font-size: 18px; font-weight: bold; border-radius: 50px; cursor: pointer; margin: 5px; }
         
-        /* 數據面板位置調整：往下移避開頂部遮擋 */
-        #status-monitor { position: absolute; top: 60px; left: 20px; background: rgba(0,0,0,0.85); padding: 18px; border-radius: 15px; border: 1.5px solid #0f0; z-index: 100; min-width: 220px; box-shadow: 0 4px 15px rgba(0,255,0,0.2); }
+        /* 橫向置頂面板 */
+        #status-monitor { 
+            position: absolute; 
+            top: 0; 
+            left: 0; 
+            width: 100%; 
+            background: rgba(0, 0, 0, 0.8); 
+            display: flex; 
+            justify-content: space-around; 
+            align-items: center; 
+            padding: 10px 0; 
+            border-bottom: 2px solid #0f0; 
+            z-index: 300; 
+            box-sizing: border-box;
+        }
+        .status-item { flex: 1; text-align: center; }
+        .status-label { font-size: 12px; color: #aaa; margin-bottom: 2px; }
+        .status-value { font-size: 18px; font-weight: bold; color: #ffff00; }
+
+        .overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; display: flex; flex-direction: column; justify-content: center; align-items: center; background: rgba(0,0,0,0.95); z-index: 400; text-align: center; padding: 20px; box-sizing: border-box; }
+        .modal { background: #1a1a1a; border: 2px solid #0f0; border-radius: 24px; padding: 25px; max-width: 500px; width: 95%; }
+        button { background: #0f0; color: #000; border: none; padding: 15px 30px; font-size: 18px; font-weight: bold; border-radius: 50px; cursor: pointer; margin: 10px; }
+        input { background: #333; border: 1px solid #0f0; color: #fff; padding: 12px; border-radius: 8px; font-size: 18px; width: 85%; margin: 10px 0; }
         
         .countdown { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); font-size: 150px; color: #fff; z-index: 150; pointer-events: none; display: none; }
-        .guide-line { position: absolute; left: 0; width: 100%; border-top: 2px dashed rgba(255,255,255,0.6); z-index: 90; display: flex; justify-content: center; pointer-events: none; }
-        .top-line { top: 20%; }
-        .bottom-line { bottom: 10%; border-top: 2px dashed rgba(100,255,100,0.4); }
-        .guide-text { background: rgba(0, 0, 0, 0.6); padding: 3px 12px; font-size: 13px; color: #fff; border-radius: 5px; transform: translateY(-50%); }
-        .red-dot { position: absolute; width: 12px; height: 12px; background-color: #ff0000; border-radius: 50%; box-shadow: 0 0 10px #ff0000; animation: blink 2s infinite ease-in-out; }
-        @keyframes blink { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.3; transform: scale(0.8); } }
+        .guide-line { position: absolute; left: 0; width: 100%; border-top: 2px dashed rgba(255,255,255,0.4); z-index: 90; pointer-events: none; }
+        .top-line { top: 25%; }
+        .bottom-line { bottom: 15%; }
         #report-img-container img { width: 100%; border: 1px solid #fff; margin-top: 10px; }
     </style>
 </head>
@@ -36,11 +49,29 @@
     <div id="step-prepare" class="overlay">
         <div class="modal">
             <h2 style="color:#0f0">康富物理治療檢測</h2>
-            <p style="color:#ccc">個案資訊登錄</p>
             <input type="text" id="patient-name" placeholder="個案姓名" value="蔡忠憲">
             <input type="text" id="patient-id" placeholder="序號" value="001">
             <br>
-            <button id="btn-start" onclick="startFlow()">開始檢測流程</button>
+            <button id="btn-start" onclick="startFlow()">開始檢測</button>
+        </div>
+    </div>
+
+    <div id="status-monitor" style="display:none;">
+        <div class="status-item">
+            <div class="status-label">當前模式</div>
+            <div id="val-mode" class="status-value">準備中</div>
+        </div>
+        <div class="status-item">
+            <div class="status-label">量測角度</div>
+            <div id="val-angle" class="status-value">0.0°</div>
+        </div>
+        <div class="status-item">
+            <div class="status-label">姿態判讀</div>
+            <div id="val-label" class="status-value">---</div>
+        </div>
+        <div class="status-item">
+            <div class="status-label">點位狀態</div>
+            <div id="val-marker" class="status-value" style="font-size:14px;">偵測中</div>
         </div>
     </div>
 
@@ -53,17 +84,8 @@
     </div>
 
     <div id="countdown-display" class="countdown">5</div>
-
-    <div id="status-monitor" style="display:none;">
-        <div id="angle-info" style="font-size: 20px; color: #ffff00; margin-bottom: 5px; white-space: pre-line;">分析中...</div>
-        <div id="marker-status" style="font-size: 14px; color: #0f0;">肩膀點位: 偵測中</div>
-    </div>
-
-    <div class="guide-line top-line">
-        <div class="red-dot"></div>
-        <span class="guide-text" style="margin-top: 35px;">頭頂請對齊紅點</span>
-    </div>
-    <div class="guide-line bottom-line"><span class="guide-text">水平參考基準</span></div>
+    <div class="guide-line top-line"></div>
+    <div class="guide-line bottom-line"></div>
 
     <div class="container">
         <video id="input_video" playsinline></video>
@@ -74,9 +96,9 @@
 
     <div id="report-preview-layer" class="overlay" style="display:none;">
         <div class="modal">
-            <h2 style="color:#0f0">個案檢測報告</h2>
+            <h2 style="color:#0f0">檢測報告預覽</h2>
             <div id="report-img-container"></div>
-            <button onclick="shareReport()">儲存 / 分享報告圖</button>
+            <button onclick="shareReport()">分享報告</button>
             <button onclick="location.reload()" style="background:#444; color:white;">完成</button>
         </div>
     </div>
@@ -110,41 +132,40 @@
 
             if (results.poseLandmarks && currentMode !== 'IDLE') {
                 const lms = results.poseLandmarks;
-                const markerStatus = document.getElementById('marker-status');
                 const isShouldersInFrame = (lms[11].visibility > 0.6 && lms[12].visibility > 0.6);
-
+                
+                const markerEl = document.getElementById('val-marker');
                 if (!isShouldersInFrame) {
-                    markerStatus.innerText = "肩膀點位: ❌ 遺失";
-                    markerStatus.style.color = "#ff5555";
+                    markerEl.innerText = "❌ 遺失"; markerEl.style.color = "#ff5555";
                     stabilityCounter = 0;
                 } else {
-                    markerStatus.innerText = "肩膀點位: ✅ 正常";
-                    markerStatus.style.color = "#00ff00";
+                    markerEl.innerText = "✅ 正常"; markerEl.style.color = "#00ff00";
                 }
 
-                let currentAngle = 0, label = "", modeDisplay = "";
+                let currentAngle = 0, label = "", modeTitle = "";
                 if (currentMode === 'FRONTAL') {
                     const headRad = Math.atan2(lms[5].y - lms[2].y, lms[5].x - lms[2].x);
                     const shRad = Math.atan2(lms[12].y - lms[11].y, lms[12].x - lms[11].x);
                     currentAngle = normalizeAngle((headRad - shRad) * 180 / Math.PI);
                     label = currentAngle > 1.5 ? "左偏 (L)" : (currentAngle < -1.5 ? "右偏 (R)" : "中立");
-                    modeDisplay = "頸肩夾角";
+                    modeTitle = "正面";
                 } else if (currentMode === 'LATERAL') {
+                    // 回歸 4 個版本前的邏輯：單純由角度正負決定前傾或後傾
                     const side = lms[11].visibility > lms[12].visibility ? 11 : 12;
                     const ear = (side === 11) ? 7 : 8;
                     const dx = lms[ear].x - lms[side].x, dy = -(lms[ear].y - lms[side].y);
-                    let rawA = Math.atan2(dx, dy) * 180 / Math.PI;
-                    const isFacingLeft = lms[0].x < ((lms[7].x + lms[8].x) / 2);
-                    if (isFacingLeft) label = rawA < -2 ? "前傾 (Fwd)" : "後傾 (Bwd)";
-                    else label = rawA > 2 ? "前傾 (Fwd)" : "後傾 (Bwd)";
-                    currentAngle = rawA;
-                    modeDisplay = "頸胸夾角";
+                    currentAngle = Math.atan2(dx, dy) * 180 / Math.PI;
+                    label = currentAngle > 2 ? "前傾 (Fwd)" : (currentAngle < -2 ? "後傾 (Bwd)" : "中立");
+                    modeTitle = "側面";
                 }
 
                 smaBuffer.push(currentAngle);
                 if(smaBuffer.length > 15) smaBuffer.shift();
                 const avgAngle = smaBuffer.reduce((a, b) => a + b, 0) / smaBuffer.length;
-                document.getElementById('angle-info').innerText = `${modeDisplay}: ${Math.abs(avgAngle).toFixed(1)}°\n狀態: ${label}`;
+                
+                document.getElementById('val-mode').innerText = modeTitle;
+                document.getElementById('val-angle').innerText = `${Math.abs(avgAngle).toFixed(1)}°`;
+                document.getElementById('val-label').innerText = label;
 
                 if (isShouldersInFrame) {
                     if (Math.abs(avgAngle - lastAngle) < (currentMode === 'FRONTAL' ? 0.5 : 1.2)) {
@@ -164,8 +185,7 @@
         });
 
         window.startFlow = async () => {
-            btnStart.disabled = true;
-            btnStart.innerText = "相機初始化中...";
+            btnStart.innerText = "相機啟動中...";
             try {
                 await camera.start();
                 reportData.name = document.getElementById('patient-name').value;
@@ -173,12 +193,10 @@
                 const now = new Date();
                 reportData.date = now.getFullYear() + String(now.getMonth()+1).padStart(2,'0') + String(now.getDate()).padStart(2,'0');
                 document.getElementById('step-prepare').style.display = 'none';
-                document.getElementById('status-monitor').style.display = 'block';
+                document.getElementById('status-monitor').style.display = 'flex';
                 currentMode = 'FRONTAL';
             } catch (err) {
-                alert("相機無法啟動，請確認是否允許相機權限。");
-                btnStart.disabled = false;
-                btnStart.innerText = "重新檢測";
+                alert("相機啟動失敗，請檢查權限。");
             }
         };
 
@@ -225,7 +243,6 @@
                 if (drawH > h) { drawH = h; drawW = h * imgAspect; }
                 const offsetX = x + (w - drawW) / 2;
                 const offsetY = y + (h - drawH) / 2;
-                ctx.strokeStyle = "#444"; ctx.lineWidth = 2; ctx.strokeRect(offsetX-2, offsetY-2, drawW+4, drawH+4);
                 ctx.drawImage(img, offsetX, offsetY, drawW, drawH);
             };
 
@@ -256,9 +273,8 @@
             const fileName = `${reportData.date}-${reportData.name}-${reportData.id}.jpg`;
             const file = new File([finalBlob], fileName, { type: 'image/jpeg' });
             if (navigator.canShare && navigator.canShare({ files: [file] })) {
-                try { await navigator.share({ files: [file], title: '康富檢測報告', text: `${reportData.name} 檢測報告` }); }
-                catch (err) { }
-            } else { alert("長按圖片儲存影像。"); }
+                try { await navigator.share({ files: [file], title: '報告分享' }); } catch (err) {}
+            } else { alert("請長按圖片儲存報告。"); }
         };
 
         function showModal(t, m, b, a) {
