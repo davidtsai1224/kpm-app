@@ -3,7 +3,7 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
-    <title>康富物理治療體態檢測系統</title>
+    <title>康富物理治療體態檢測系統 v5.3</title>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose@0.5.1675469404/pose.js" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
@@ -114,36 +114,29 @@
         let devicePitch = 90; 
         let smaBuffer = [], reportData = { name: "", id: "", height: 170, date: "", frontal: null, lateral: null }, finalBlob = null;
 
-        // --- 核心：修正後的 3D 向量運算 ---
-        function calculate3DAngle(p1, p2, mode) {
-            const aspect = 1280 / 720; // 相機長寬比
+        // --- 核心：v5.3 空間向量夾角修正 ---
+        function calculate3DAngle(p1, p2) {
+            const aspect = 1280 / 720;
             const pitchRad = (devicePitch - 90) * Math.PI / 180;
 
-            // 1. 座標正規化 (修正長寬比導致的 X 軸失真)
+            // 1. 座標正規化與感測器旋轉補償
             const x1 = p1.x * aspect, x2 = p2.x * aspect;
-            const y1 = p1.y, y2 = p2.y;
             const z1 = p1.z, z2 = p2.z;
-
-            // 2. 設備俯仰補償 (Pitch Compensation)
-            const y1_c = y1 * Math.cos(pitchRad) - z1 * Math.sin(pitchRad);
-            const y2_c = y2 * Math.cos(pitchRad) - z2 * Math.sin(pitchRad);
+            
+            // 俯仰角補償
+            const y1_corr = p1.y * Math.cos(pitchRad) - p1.z * Math.sin(pitchRad);
+            const y2_corr = p2.y * Math.cos(pitchRad) - p2.z * Math.sin(pitchRad);
 
             const dx = x1 - x2;
-            const dy = y1_c - y2_c;
+            const dy = y1_corr - y2_corr;
             const dz = z1 - z2;
 
-            // 3. 臨床投影夾角運算
-            // 若為正面檢測，我們關注的是「冠狀面偏移」，使用 dx 與 dy
-            // 若為側面檢測，我們關注的是「矢狀面偏移」，使用 dz 與 dy
-            let angle = 0;
-            if (mode === 'FRONTAL') {
-                // 正面：計算在 XY 平面上的投影夾角，但包含 Z 的微幅補償
-                angle = Math.atan2(Math.abs(dx), Math.abs(dy)) * 180 / Math.PI;
-            } else {
-                // 側面：計算在 YZ 平面上的投影夾角 (dz 代表深度位移)
-                angle = Math.atan2(Math.abs(dz), Math.abs(dy)) * 180 / Math.PI;
-            }
-            return angle;
+            // 2. 改良公式：計算水平面總位移量 (XY與ZY的合成)
+            // 這樣不論是正面(主要是dx)還是側面(主要是dz)，都能精準捕捉
+            const horizontalShift = Math.sqrt(dx * dx + dz * dz);
+            
+            // 計算與垂直 Y 軸的夾角
+            return Math.atan2(horizontalShift, Math.abs(dy)) * 180 / Math.PI;
         }
 
         window.requestSensor = async () => {
@@ -183,28 +176,27 @@
 
             if (results.poseLandmarks && currentMode !== 'IDLE') {
                 const lms = results.poseLandmarks;
-                const markerStatus = document.getElementById('val-marker');
-                const checkInFrame = (p) => p.x >= 0 && p.x <= 1 && p.y >= 0 && p.y <= 1 && p.visibility > 0.6;
-                const isShouldersInFrame = checkInFrame(lms[11]) && checkInFrame(lms[12]);
-                markerStatus.innerText = isShouldersInFrame ? "✅ 正常" : "❌ 遺失";
+                const checkValid = (p) => p.x >= 0 && p.x <= 1 && p.y >= 0 && p.y <= 1 && p.visibility > 0.6;
+                const isShouldersInFrame = checkValid(lms[11]) && checkValid(lms[12]);
+                document.getElementById('val-marker').innerText = isShouldersInFrame ? "✅ 正常" : "❌ 遺失";
 
                 let currentAngle = 0, label = "", modeTitle = "", riskL = "";
 
                 if (currentMode === 'FRONTAL') {
-                    currentAngle = calculate3DAngle(lms[0], {x:(lms[11].x+lms[12].x)/2, y:(lms[11].y+lms[12].y)/2, z:(lms[11].z+lms[12].z)/2}, 'FRONTAL');
+                    currentAngle = calculate3DAngle(lms[0], {x:(lms[11].x+lms[12].x)/2, y:(lms[11].y+lms[12].y)/2, z:(lms[11].z+lms[12].z)/2});
                     label = lms[0].x > (lms[11].x+lms[12].x)/2 ? "向左偏移" : "向右偏移";
                     modeTitle = "頸肩";
                     if (currentAngle >= 7.5) riskL = "高"; else if (currentAngle >= 5) riskL = "中"; else riskL = "低";
                 } else if (currentMode === 'LATERAL') {
                     const side = lms[11].visibility > lms[12].visibility ? 11 : 12;
-                    currentAngle = calculate3DAngle(lms[side === 11 ? 7 : 8], lms[side], 'LATERAL');
+                    currentAngle = calculate3DAngle(lms[side === 11 ? 7 : 8], lms[side]);
                     label = "頭部前移";
                     modeTitle = "頸胸";
                     if (currentAngle >= 15) riskL = "高"; else if (currentAngle >= 5) riskL = "中"; else riskL = "低";
                 }
 
                 smaBuffer.push(currentAngle);
-                if(smaBuffer.length > 35) smaBuffer.shift(); 
+                if(smaBuffer.length > 40) smaBuffer.shift(); 
                 const avgAngle = smaBuffer.reduce((a, b) => a + b, 0) / smaBuffer.length;
                 
                 document.getElementById('val-mode').innerText = modeTitle;
@@ -213,7 +205,7 @@
                 document.getElementById('dynamic-risk-ui').innerText = `風險評估：${riskL}`;
 
                 if (isShouldersInFrame) {
-                    if (Math.abs(avgAngle - lastAngle) < 0.8) {
+                    if (Math.abs(avgAngle - lastAngle) < 0.6) {
                         stabilityCounter++;
                         if (stabilityCounter >= 40 && !isStable) { isStable = true; startCountdown(avgAngle, label, riskL); }
                     } else { if(!isStable) stabilityCounter = 0; }
@@ -293,10 +285,11 @@
 
             const imgL = await loadImg(reportData.lateral.img);
             drawBoxedImage(imgL, 420, 210, 340, 480);
-            ctx.fillStyle = "#004d40"; ctx.fillText("【側面：3D頸胸夾角】", 420, 730);
-            ctx.fillStyle = "#333"; ctx.fillText(`量測角度: ${reportData.lateral.angle}° (${reportData.lateral.risk}風險)`, 420, 775);
+            ctx.fillStyle = "#004d40"; ctx.font = "bold 22px sans-serif"; ctx.fillText("【側面：3D頸胸夾角】", 420, 730);
+            ctx.fillStyle = "#333"; ctx.font = "22px sans-serif";
+            ctx.fillText(`量測角度: ${reportData.lateral.angle}° (${reportData.lateral.risk}風險)`, 420, 775);
             
-            ctx.fillStyle = "#aaa"; ctx.font = "italic 16px sans-serif"; ctx.fillText("本報告由 KPM 5.2 空間座標系統生成。", 40, 1160);
+            ctx.fillStyle = "#aaa"; ctx.font = "italic 16px sans-serif"; ctx.fillText("本報告由 KPM 5.3 空間座標精度校正版生成。", 40, 1160);
 
             const finalDataUrl = c.toDataURL("image/jpeg", 0.9);
             const reportImg = new Image(); reportImg.src = finalDataUrl;
