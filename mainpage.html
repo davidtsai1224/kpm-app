@@ -8,7 +8,6 @@
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
     <style>
-        /* 完整保留 v4.9.12 的所有樣式設定 */
         body { margin: 0; background: #000; color: #0f0; font-family: sans-serif; overflow: hidden; height: 100vh; }
         .container { position: relative; width: 100vw; height: 100vh; display: flex; justify-content: center; align-items: center; }
         #output_canvas { max-width: 100%; max-height: 100%; transform: scaleX(-1); }
@@ -33,10 +32,9 @@
         
         input { background: #333; border: 1px solid #0f0; color: #fff; padding: 12px; border-radius: 8px; font-size: 18px; width: 85%; margin: 10px 0; text-align: center; }
         
-        /* 設備水平與旋轉 UI */
         #leveler-box { margin: 15px 0; padding: 12px; border: 1px solid #444; border-radius: 15px; background: #000; }
         #dynamic-risk-ui { position: absolute; bottom: 18%; width: 100%; text-align: center; color: #ff5555; font-size: 18px; font-weight: bold; z-index: 310; text-shadow: 2px 2px 4px #000; pointer-events: none; }
-        #rotation-warning { position: absolute; top: 15%; width: 100%; text-align: center; color: #ff5555; font-size: 20px; font-weight: bold; z-index: 310; display: none; animation: blink 1s infinite; }
+        #rotation-warning { position: absolute; top: 15%; width: 100%; text-align: center; color: #ff5555; font-size: 16px; font-weight: bold; z-index: 310; display: none; animation: blink 1.5s infinite; }
 
         .countdown { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); font-size: 150px; color: #fff; z-index: 150; pointer-events: none; display: none; }
         
@@ -74,12 +72,12 @@
 
     <div id="status-monitor" style="display:none;">
         <div class="status-item"><div class="status-label">模式</div><div id="val-mode" class="status-value">---</div></div>
-        <div class="status-item"><div class="status-label">角度</div><div id="val-angle" class="status-value">0.0°</div></div>
+        <div class="status-item"><div class="status-label">量測角度</div><div id="val-angle" class="status-value">0.0°</div></div>
         <div class="status-item"><div class="status-label">姿態判讀</div><div id="val-label" class="status-value">---</div></div>
-        <div class="status-item"><div class="status-label">肩膀點位</div><div id="val-marker" class="status-value">偵測中</div></div>
+        <div class="status-item"><div class="status-label">點位狀態</div><div id="val-marker" class="status-value">偵測中</div></div>
     </div>
 
-    <div id="rotation-warning">⚠️ 身體旋轉角度過大，請正對鏡頭</div>
+    <div id="rotation-warning">⚠️ 旋轉角度過大 (僅供參考不強制鎖死)</div>
 
     <div id="step-next-alert" class="overlay" style="display:none;">
         <div class="modal">
@@ -125,24 +123,21 @@
         let devicePitch = 90;
         let smaBuffer = [], reportData = { name: "", id: "", height: 170, date: "", frontal: null, lateral: null }, finalBlob = null;
 
-        function normalizeAngle(angle) {
-            while (angle > 180) angle -= 360;
-            while (angle < -180) angle += 360;
-            return angle;
-        }
-
-        // --- 核心：真 3D 空間轉換函式 ---
+        // --- 核心：3D 物理空間點位校正 ---
         function get3DPoint(p) {
-            const aspect = 1280 / 720;
+            // 將 X, Y, Z 統一對齊至相同的物理比例尺 (Pixel Scale)
+            const px = p.x * 1280;
+            const py = p.y * 720;
+            const pz = p.z * 1280; 
+            
             const pitchRad = (devicePitch - 90) * Math.PI / 180;
             return {
-                x: p.x * aspect,
-                y: p.y * Math.cos(pitchRad) - p.z * Math.sin(pitchRad),
-                z: p.y * Math.sin(pitchRad) + p.z * Math.cos(pitchRad)
+                x: px,
+                y: py * Math.cos(pitchRad) - pz * Math.sin(pitchRad),
+                z: py * Math.sin(pitchRad) + pz * Math.cos(pitchRad)
             };
         }
 
-        // 設備校正設定
         window.requestSensor = async () => {
             if (typeof DeviceOrientationEvent.requestPermission === 'function') {
                 const permission = await DeviceOrientationEvent.requestPermission();
@@ -182,7 +177,7 @@
             if (results.poseLandmarks && currentMode !== 'IDLE') {
                 const lms = results.poseLandmarks;
                 
-                // v4.9.12 嚴格點位校正
+                // 點位偵測 (v4.9.12)
                 const markerStatus = document.getElementById('val-marker');
                 const checkIn = (p) => p.x > 0 && p.x < 1 && p.y > 0 && p.y < 1 && p.visibility > 0.6;
                 const isShouldersInFrame = checkIn(lms[11]) && checkIn(lms[12]);
@@ -194,63 +189,71 @@
                     markerStatus.innerText = "✅ 正常"; markerStatus.style.color = "#00ff00";
                 }
 
-                // 取得 3D 絕對座標
-                const e2 = get3DPoint(lms[2]), e5 = get3DPoint(lms[5]);
-                const s11 = get3DPoint(lms[11]), s12 = get3DPoint(lms[12]);
-
                 let currentAngle = 0, label = "", modeTitle = "", riskL = "", isRotating = false;
 
                 if (currentMode === 'FRONTAL') {
-                    // 正面邏輯：計算 3D 空間中的冠狀面相對傾角 (完美繼承 v4.9.12 初衷)
-                    const getTilt = (A, B) => {
-                        const len = Math.sqrt((B.x-A.x)**2 + (B.y-A.y)**2 + (B.z-A.z)**2);
-                        return Math.asin((B.y - A.y) / len); // 計算 3D 向量相對於水平面的夾角
-                    };
-                    const headRad = getTilt(e2, e5);
-                    const shRad = getTilt(s11, s12);
-                    currentAngle = normalizeAngle((headRad - shRad) * 180 / Math.PI);
+                    // 【正面邏輯】 3D 冠狀面幾何偏移
+                    const e2 = get3DPoint(lms[2]), e5 = get3DPoint(lms[5]);
+                    const s11 = get3DPoint(lms[11]), s12 = get3DPoint(lms[12]);
                     
-                    label = currentAngle > 1.5 ? "左偏 (L)" : (currentAngle < -1.5 ? "右偏 (R)" : "中立");
+                    const hMid = { x: (e2.x+e5.x)/2, y: (e2.y+e5.y)/2, z: (e2.z+e5.z)/2 };
+                    const sMid = { x: (s11.x+s12.x)/2, y: (s11.y+s12.y)/2, z: (s11.z+s12.z)/2 };
+                    
+                    const sh_dx = s11.x - s12.x; 
+                    const sh_dy = s11.y - s12.y; 
+                    const sh_angle = Math.atan2(sh_dy, sh_dx);
+                    
+                    const neck_dx = hMid.x - sMid.x;
+                    const neck_dy = hMid.y - sMid.y; 
+                    const neck_angle = Math.atan2(neck_dy, neck_dx);
+                    
+                    // 計算頭部中軸相對於肩膀水平線的垂直偏差
+                    let tilt = (neck_angle - (sh_angle - Math.PI/2)) * 180 / Math.PI;
+                    while(tilt > 180) tilt -= 360;
+                    while(tilt < -180) tilt += 360;
+                    
+                    currentAngle = Math.abs(tilt);
+                    // 方向修正：neck_dx > 0 意味著頭部往畫面右側偏移 (也就是受測者的左側)
+                    label = tilt > 1.5 ? "左偏 (L)" : (tilt < -1.5 ? "右偏 (R)" : "中立");
                     modeTitle = "頸肩";
 
-                    // 旋轉警示：判斷雙肩的 Z 軸深度差是否過大
-                    const sh_dx = s12.x - s11.x, sh_dz = s12.z - s11.z;
-                    isRotating = Math.abs(sh_dz) / Math.sqrt(sh_dx*sh_dx + sh_dz*sh_dz) > 0.35;
-                    rotWarning.innerText = "⚠️ 身體旋轉過大，請正對鏡頭";
+                    // 旋轉預警 (溫和不鎖死)
+                    const shoulderWidth = Math.sqrt(sh_dx**2 + sh_dy**2);
+                    isRotating = Math.abs(s11.z - s12.z) > (shoulderWidth * 0.4);
                     
-                    const absA = Math.abs(currentAngle);
-                    if (absA >= 7.5) riskL = "高"; else if (absA >= 5) riskL = "中"; else riskL = "低";
+                    if (currentAngle >= 7.5) riskL = "高"; else if (currentAngle >= 5) riskL = "中"; else riskL = "低";
 
                 } else if (currentMode === 'LATERAL') {
-                    // 側面邏輯：動態法向量投影法
+                    // 【側面邏輯】 矢狀面法向量投影 (完全排除另一側肩膀干擾)
                     const sideIdx = lms[11].visibility > lms[12].visibility ? 11 : 12;
                     const earIdx = sideIdx === 11 ? 7 : 8;
-                    const sh = get3DPoint(lms[sideIdx]), ear = get3DPoint(lms[earIdx]);
                     
-                    // 1. 計算面朝方向的 3D 法向量 (Orthogonal to shoulders in XZ plane)
-                    const sx = s12.x - s11.x, sz = s12.z - s11.z;
-                    let fx = -sz, fz = sx; 
+                    const sh = get3DPoint(lms[sideIdx]);
+                    const ear = get3DPoint(lms[earIdx]);
+                    const nose = get3DPoint(lms[0]);
+                    
+                    // 1. 利用「鼻子與耳朵」定義 3D 前方向量 (Forward Vector)
+                    let fx = nose.x - ear.x;
+                    let fz = nose.z - ear.z;
                     const flen = Math.sqrt(fx*fx + fz*fz);
-                    fx /= flen; fz /= flen; // 單位化
-
-                    // 2. 將耳肩 3D 向量投影到法向量上，取得「真實前傾水平距離」
-                    const ex = ear.x - sh.x, ey = ear.y - sh.y, ez = ear.z - sh.z;
+                    if (flen > 0) { fx /= flen; fz /= flen; } else { fx = 1; fz = 0; }
+                    
+                    // 2. 將「耳朵至肩膀」的空間位移，投影到前方向量上，求得精準前傾量
+                    const ex = ear.x - sh.x;
+                    const ez = ear.z - sh.z;
+                    const ey = ear.y - sh.y; // 垂直高度差
+                    
                     const forward_dist = ex * fx + ez * fz;
-
-                    // 3. 計算真實 3D 傾角
-                    currentAngle = Math.atan2(forward_dist, -ey) * 180 / Math.PI;
+                    
+                    // 3. 利用前傾量與高度差計算真實夾角
+                    currentAngle = Math.atan2(forward_dist, Math.abs(ey)) * 180 / Math.PI;
                     label = currentAngle > 2 ? "前傾 (Fwd)" : (currentAngle < -2 ? "後傾 (Bwd)" : "中立");
                     modeTitle = "頸胸";
+                    isRotating = false; // 側面不進行旋轉誤判
 
-                    // 旋轉警示：側面時，雙肩在 X 軸(左右)的距離不應過大
-                    isRotating = Math.abs(sx) / Math.sqrt(sx*sx + sz*sz) > 0.4;
-                    rotWarning.innerText = "⚠️ 身體旋轉過大，請完全側對鏡頭";
-
-                    const absA = Math.abs(currentAngle);
-                    if (absA >= 15) riskL = "高"; else if (absA >= 5) riskL = "中"; else riskL = "低";
+                    if (Math.abs(currentAngle) >= 15) riskL = "高"; else if (Math.abs(currentAngle) >= 5) riskL = "中"; else riskL = "低";
                 }
 
-                // UI 控制
                 rotWarning.style.display = isRotating ? 'block' : 'none';
                 
                 smaBuffer.push(currentAngle);
@@ -262,14 +265,11 @@
                 document.getElementById('val-label').innerText = label;
                 document.getElementById('dynamic-risk-ui').innerText = `風險評估：${riskL}`;
 
-                // v4.9.12 穩定度判斷邏輯
-                if (isShouldersInFrame && !isRotating) {
+                if (isShouldersInFrame) {
                     if (Math.abs(avgAngle - lastAngle) < (currentMode === 'FRONTAL' ? 0.5 : 1.2)) {
                         stabilityCounter++;
                         if (stabilityCounter >= 40 && !isStable) { isStable = true; startCountdown(avgAngle, label, riskL); }
                     } else { if(!isStable) stabilityCounter = 0; }
-                } else {
-                    stabilityCounter = 0; // 旋轉或出鏡都會重置
                 }
                 lastAngle = avgAngle;
                 drawConnectors(canvasCtx, lms, POSE_CONNECTIONS, {color: '#00FF00', lineWidth: 2});
@@ -327,7 +327,6 @@
             ctx.fillStyle = "white"; ctx.fillRect(0,0,800,1200);
             ctx.fillStyle = "#004d40"; ctx.fillRect(0,0,800,110);
             
-            // 完美保留 v4.9.12 的報告樣式
             ctx.fillStyle = "white"; ctx.font = "bold 38px sans-serif"; ctx.textAlign = "center";
             ctx.fillText("康富物理治療體態檢測報告", 400, 70); 
             ctx.textAlign = "left"; ctx.fillStyle = "#333"; ctx.font = "22px sans-serif";
@@ -360,7 +359,7 @@
             ctx.fillText(`姿態判讀: ${reportData.lateral.label}`, 420, 765);
             ctx.fillText(`量測角度: ${reportData.lateral.angle}° (${reportData.lateral.risk})`, 420, 800);
             
-            ctx.fillStyle = "#aaa"; ctx.font = "italic 16px sans-serif"; ctx.fillText("康富物理治療體系 版權所有。 (v6.1 3D空間運算版)", 40, 1160);
+            ctx.fillStyle = "#aaa"; ctx.font = "italic 16px sans-serif"; ctx.fillText("康富物理治療體系 版權所有。", 40, 1160);
 
             const finalDataUrl = c.toDataURL("image/jpeg", 0.9);
             const reportImg = new Image(); reportImg.src = finalDataUrl;
