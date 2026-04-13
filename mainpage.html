@@ -3,7 +3,7 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
-    <title>康富物理治療體態檢測系統 v5.3</title>
+    <title>康富物理治療體態檢測系統 v5.5</title>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose@0.5.1675469404/pose.js" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
@@ -36,15 +36,7 @@
         input { background: #333; border: 1px solid #0f0; color: #fff; padding: 12px; border-radius: 8px; font-size: 18px; width: 85%; margin: 10px 0; text-align: center; }
         
         #leveler-box { margin: 15px 0; padding: 12px; border: 1px solid #444; border-radius: 15px; background: #000; }
-        .countdown { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); font-size: 150px; color: #fff; z-index: 150; pointer-events: none; display: none; }
-        
-        .guide-line { position: absolute; left: 0; width: 100%; border-top: 2px dashed rgba(255,255,255,0.4); z-index: 90; display: flex; justify-content: center; pointer-events: none; }
-        .top-line { top: 20%; }
-        .bottom-line { bottom: 10%; border-top: 2px dashed rgba(100,255,100,0.4); }
-        .red-dot { position: absolute; width: 12px; height: 12px; background-color: #ff0000; border-radius: 50%; box-shadow: 0 0 10px #ff0000; animation: blink 2s infinite ease-in-out; }
-        
         #dynamic-risk-ui { position: absolute; bottom: 18%; width: 100%; text-align: center; color: #ff5555; font-size: 18px; font-weight: bold; z-index: 310; text-shadow: 2px 2px 4px #000; pointer-events: none; }
-        #report-img-container img { width: 100%; border: 1px solid #fff; margin-top: 10px; }
     </style>
 </head>
 <body>
@@ -57,12 +49,10 @@
                 <input type="text" id="patient-id" placeholder="序號" value="001" style="width:35%;">
                 <input type="number" id="patient-height" placeholder="身高(cm)" value="170" style="width:45%;">
             </div>
-            
             <div id="leveler-box">
                 <div style="color:#aaa; font-size: 12px;">設備水平校正 (Pitch: <span id="pitch-val">90.0</span>°)</div>
-                <div id="pitch-status" style="color: #ff5555; font-weight: bold; margin-top: 5px;">等待感測器授權...</div>
+                <div id="pitch-status" style="color: #ff5555; font-weight: bold; margin-top: 5px;">請授權感測器</div>
             </div>
-
             <button id="btn-sensor" class="btn-sensor" onclick="requestSensor()">1. 授權感測器</button>
             <button id="btn-start" class="btn-start-inactive" onclick="startFlow()" disabled>2. 開始檢測</button>
         </div>
@@ -70,38 +60,16 @@
 
     <div id="status-monitor" style="display:none;">
         <div class="status-item"><div class="status-label">模式</div><div id="val-mode" class="status-value">---</div></div>
-        <div class="status-item"><div class="status-label">3D 角度</div><div id="val-angle" class="status-value">0.0°</div></div>
-        <div class="status-item"><div class="status-label">姿態判讀</div><div id="val-label" class="status-value">---</div></div>
-        <div class="status-item"><div class="status-label">肩膀點位</div><div id="val-marker" class="status-value">偵測中</div></div>
+        <div class="status-item"><div class="status-label">真 3D 角度</div><div id="val-angle" class="status-value">0.0°</div></div>
+        <div class="status-item"><div class="status-label">旋轉預警</div><div id="val-rotation" class="status-value">正常</div></div>
+        <div class="status-item"><div class="status-label">肩膀狀態</div><div id="val-marker" class="status-value">偵測中</div></div>
     </div>
 
-    <div id="step-next-alert" class="overlay" style="display:none;">
-        <div class="modal">
-            <h2 id="next-title">檢測完成</h2>
-            <p id="next-msg" style="color:#ccc;"></p>
-            <button id="next-btn" style="background:#0f0; color:#000;"></button>
-        </div>
-    </div>
-
-    <div id="countdown-display" class="countdown">5</div>
-    <div class="guide-line top-line"><div class="red-dot"></div><span class="guide-text" style="margin-top: 35px;">頭頂請對齊紅點</span></div>
     <div id="dynamic-risk-ui"></div>
-    <div class="guide-line bottom-line"><span class="guide-text">距離偵測範圍</span></div>
 
     <div class="container">
         <video id="input_video" playsinline></video>
         <canvas id="output_canvas"></canvas>
-    </div>
-
-    <canvas id="report-gen-canvas" width="800" height="1200" style="display:none;"></canvas>
-
-    <div id="report-preview-layer" class="overlay" style="display:none;">
-        <div class="modal">
-            <h2 style="color:#0f0">個案檢測報告</h2>
-            <div id="report-img-container"></div>
-            <button onclick="shareReport()" style="background:#0f0; color:#000;">儲存 / 分享報告圖</button>
-            <button onclick="location.reload()" style="background:#444; color:white;">完成</button>
-        </div>
     </div>
 
     <script type="module">
@@ -112,31 +80,44 @@
         
         let currentMode = 'IDLE', isStable = false, stabilityCounter = 0, lastAngle = 0;
         let devicePitch = 90; 
-        let smaBuffer = [], reportData = { name: "", id: "", height: 170, date: "", frontal: null, lateral: null }, finalBlob = null;
+        let smaBuffer = [];
 
-        // --- 核心：v5.3 空間向量夾角修正 ---
-        function calculate3DAngle(p1, p2) {
+        // --- 真 3D 運算引擎 ---
+        function calculateTrue3DAngle(p1, p2) {
             const aspect = 1280 / 720;
             const pitchRad = (devicePitch - 90) * Math.PI / 180;
 
-            // 1. 座標正規化與感測器旋轉補償
-            const x1 = p1.x * aspect, x2 = p2.x * aspect;
-            const z1 = p1.z, z2 = p2.z;
-            
-            // 俯仰角補償
-            const y1_corr = p1.y * Math.cos(pitchRad) - p1.z * Math.sin(pitchRad);
-            const y2_corr = p2.y * Math.cos(pitchRad) - p2.z * Math.sin(pitchRad);
+            // 1. 空間座標旋轉補償 (Rotation Matrix on X-Axis)
+            // 將 MediaPipe 的點位旋轉，補償手機的俯仰角，建立絕對垂直座標系
+            const rotatePoint = (p) => {
+                const y = p.y;
+                const z = p.z;
+                return {
+                    x: p.x * aspect, // 修正長寬比
+                    y: y * Math.cos(pitchRad) - z * Math.sin(pitchRad),
+                    z: y * Math.sin(pitchRad) + z * Math.cos(pitchRad)
+                };
+            };
 
-            const dx = x1 - x2;
-            const dy = y1_corr - y2_corr;
-            const dz = z1 - z2;
+            const pt1 = rotatePoint(p1);
+            const pt2 = rotatePoint(p2);
 
-            // 2. 改良公式：計算水平面總位移量 (XY與ZY的合成)
-            // 這樣不論是正面(主要是dx)還是側面(主要是dz)，都能精準捕捉
-            const horizontalShift = Math.sqrt(dx * dx + dz * dz);
+            // 2. 空間向量計算
+            const dx = pt1.x - pt2.x;
+            const dy = pt1.y - pt2.y;
+            const dz = pt1.z - pt2.z;
+
+            // 3. 計算旋轉度 (左右深度的偏差)
+            const rotationOffset = Math.abs(dz); 
+            document.getElementById('val-rotation').innerText = rotationOffset > 0.1 ? "⚠️ 旋轉" : "正常";
+            document.getElementById('val-rotation').style.color = rotationOffset > 0.1 ? "#ff5555" : "#0f0";
+
+            // 4. 計算 3D 空間向量相對於絕對垂直線 (0, 1, 0) 的夾角
+            // 利用空間向量餘弦：Angle = arccos( |dy| / sqrt(dx^2 + dy^2 + dz^2) )
+            const mag = Math.sqrt(dx*dx + dy*dy + dz*dz);
+            if (mag === 0) return 0;
             
-            // 計算與垂直 Y 軸的夾角
-            return Math.atan2(horizontalShift, Math.abs(dy)) * 180 / Math.PI;
+            return Math.acos(Math.abs(dy) / mag) * 180 / Math.PI;
         }
 
         window.requestSensor = async () => {
@@ -151,15 +132,15 @@
                 devicePitch = event.beta;
                 document.getElementById('pitch-val').innerText = devicePitch.toFixed(1);
                 const status = document.getElementById('pitch-status');
-                if (Math.abs(devicePitch - 90) < 2.5) {
+                if (Math.abs(devicePitch - 90) < 3) {
                     status.innerText = "✅ 設備已垂直"; status.style.color = "#0f0";
                     btnStart.disabled = false; btnStart.className = "btn-start-active";
                 } else {
-                    status.innerText = "⚠️ 請調整手機垂直度"; status.style.color = "#ff5555";
+                    status.innerText = "⚠️ 請微調垂直度"; status.style.color = "#ff5555";
                     btnStart.disabled = true; btnStart.className = "btn-start-inactive";
                 }
             });
-            document.getElementById('btn-sensor').innerText = "✅ 已授權";
+            document.getElementById('btn-sensor').innerText = "✅ 感測器授權完成";
         }
 
         const pose = new Pose({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose@0.5.1675469404/${file}`});
@@ -180,18 +161,14 @@
                 const isShouldersInFrame = checkValid(lms[11]) && checkValid(lms[12]);
                 document.getElementById('val-marker').innerText = isShouldersInFrame ? "✅ 正常" : "❌ 遺失";
 
-                let currentAngle = 0, label = "", modeTitle = "", riskL = "";
-
+                let currentAngle = 0, riskL = "";
                 if (currentMode === 'FRONTAL') {
-                    currentAngle = calculate3DAngle(lms[0], {x:(lms[11].x+lms[12].x)/2, y:(lms[11].y+lms[12].y)/2, z:(lms[11].z+lms[12].z)/2});
-                    label = lms[0].x > (lms[11].x+lms[12].x)/2 ? "向左偏移" : "向右偏移";
-                    modeTitle = "頸肩";
+                    const shoulderMid = {x:(lms[11].x+lms[12].x)/2, y:(lms[11].y+lms[12].y)/2, z:(lms[11].z+lms[12].z)/2};
+                    currentAngle = calculateTrue3DAngle(lms[0], shoulderMid);
                     if (currentAngle >= 7.5) riskL = "高"; else if (currentAngle >= 5) riskL = "中"; else riskL = "低";
                 } else if (currentMode === 'LATERAL') {
                     const side = lms[11].visibility > lms[12].visibility ? 11 : 12;
-                    currentAngle = calculate3DAngle(lms[side === 11 ? 7 : 8], lms[side]);
-                    label = "頭部前移";
-                    modeTitle = "頸胸";
+                    currentAngle = calculateTrue3DAngle(lms[side === 11 ? 7 : 8], lms[side]);
                     if (currentAngle >= 15) riskL = "高"; else if (currentAngle >= 5) riskL = "中"; else riskL = "低";
                 }
 
@@ -199,15 +176,16 @@
                 if(smaBuffer.length > 40) smaBuffer.shift(); 
                 const avgAngle = smaBuffer.reduce((a, b) => a + b, 0) / smaBuffer.length;
                 
-                document.getElementById('val-mode').innerText = modeTitle;
-                document.getElementById('val-angle').innerText = `${Math.abs(avgAngle).toFixed(1)}°`;
-                document.getElementById('val-label').innerText = label;
+                document.getElementById('val-mode').innerText = currentMode==='FRONTAL'?'頸肩':'頸胸';
+                document.getElementById('val-angle').innerText = `${avgAngle.toFixed(1)}°`;
                 document.getElementById('dynamic-risk-ui').innerText = `風險評估：${riskL}`;
 
                 if (isShouldersInFrame) {
-                    if (Math.abs(avgAngle - lastAngle) < 0.6) {
+                    // 只有在穩定且沒有嚴重旋轉的情況下才倒數
+                    const rotationVal = Math.abs(lms[11].z - lms[12].z);
+                    if (Math.abs(avgAngle - lastAngle) < 0.6 && rotationVal < 0.15) {
                         stabilityCounter++;
-                        if (stabilityCounter >= 40 && !isStable) { isStable = true; startCountdown(avgAngle, label, riskL); }
+                        if (stabilityCounter >= 45 && !isStable) { isStable = true; alert("數據鎖定，正在擷取..."); }
                     } else { if(!isStable) stabilityCounter = 0; }
                 }
                 lastAngle = avgAngle;
@@ -217,103 +195,12 @@
         });
 
         window.startFlow = async () => {
-            reportData.name = document.getElementById('patient-name').value;
-            reportData.id = document.getElementById('patient-id').value;
-            reportData.height = document.getElementById('patient-height').value;
-            const now = new Date();
-            reportData.date = now.getFullYear() + String(now.getMonth()+1).padStart(2,'0') + String(now.getDate()).padStart(2,'0');
             document.getElementById('step-prepare').style.display = 'none';
             document.getElementById('status-monitor').style.display = 'flex';
             currentMode = 'FRONTAL';
             const camera = new Camera(videoElement, {onFrame: async () => { await pose.send({image: videoElement}); }, width: 1280, height: 720});
             camera.start();
         };
-
-        function startCountdown(angle, label, risk) {
-            const cd = document.getElementById('countdown-display');
-            cd.style.display = 'block';
-            let timer = 5; cd.innerText = timer;
-            let itv = setInterval(() => {
-                timer--; cd.innerText = timer;
-                if (timer <= 0) { clearInterval(itv); cd.style.display = 'none'; captureStep(angle, label, risk); }
-            }, 1000);
-        }
-
-        function captureStep(angle, label, risk) {
-            const snapshot = canvasElement.toDataURL("image/jpeg", 0.9);
-            if (currentMode === 'FRONTAL') {
-                reportData.frontal = { img: snapshot, angle: angle.toFixed(1), label: label, risk: risk };
-                currentMode = 'IDLE';
-                showModal("正面完成", "請轉向「側面」。", "進入側面檢測", () => {
-                    document.getElementById('step-next-alert').style.display = 'none';
-                    currentMode = 'LATERAL'; stabilityCounter = 0; isStable = false;
-                });
-            } else {
-                reportData.lateral = { img: snapshot, angle: angle.toFixed(1), label: label, risk: risk };
-                currentMode = 'IDLE'; generateReport();
-            }
-        }
-
-        async function generateReport() {
-            const c = document.getElementById('report-gen-canvas');
-            const ctx = c.getContext('2d');
-            ctx.fillStyle = "white"; ctx.fillRect(0,0,800,1200);
-            ctx.fillStyle = "#004d40"; ctx.fillRect(0,0,800,110);
-            ctx.fillStyle = "white"; ctx.font = "bold 38px sans-serif"; ctx.textAlign = "center";
-            ctx.fillText("康富物理治療體態檢測報告", 400, 70); 
-            ctx.textAlign = "left"; ctx.fillStyle = "#333"; ctx.font = "22px sans-serif";
-            ctx.fillText(`個案: ${reportData.name}`, 40, 160);
-            ctx.fillText(`身高: ${reportData.height}cm`, 320, 160);
-            ctx.fillText(`日期: ${reportData.date}`, 580, 160);
-            
-            const loadImg = (src) => new Promise(res => { const i = new Image(); i.onload = () => res(i); i.src = src; });
-            const drawBoxedImage = (img, x, y, w, h) => {
-                const imgAspect = img.width / img.height;
-                let drawW = w, drawH = w / imgAspect;
-                if (drawH > h) { drawH = h; drawW = h * imgAspect; }
-                const offsetX = x + (w - drawW) / 2;
-                const offsetY = y + (h - drawH) / 2;
-                ctx.strokeStyle = "#444"; ctx.lineWidth = 2; ctx.strokeRect(offsetX-2, offsetY-2, drawW+4, drawH+4);
-                ctx.drawImage(img, offsetX, offsetY, drawW, drawH);
-            };
-
-            const imgF = await loadImg(reportData.frontal.img);
-            drawBoxedImage(imgF, 40, 210, 340, 480);
-            ctx.fillStyle = "#004d40"; ctx.font = "bold 22px sans-serif"; ctx.fillText("【正面：3D頸肩夾角】", 40, 730);
-            ctx.fillStyle = "#333"; ctx.font = "22px sans-serif";
-            ctx.fillText(`量測角度: ${reportData.frontal.angle}° (${reportData.frontal.risk}風險)`, 40, 775);
-
-            const imgL = await loadImg(reportData.lateral.img);
-            drawBoxedImage(imgL, 420, 210, 340, 480);
-            ctx.fillStyle = "#004d40"; ctx.font = "bold 22px sans-serif"; ctx.fillText("【側面：3D頸胸夾角】", 420, 730);
-            ctx.fillStyle = "#333"; ctx.font = "22px sans-serif";
-            ctx.fillText(`量測角度: ${reportData.lateral.angle}° (${reportData.lateral.risk}風險)`, 420, 775);
-            
-            ctx.fillStyle = "#aaa"; ctx.font = "italic 16px sans-serif"; ctx.fillText("本報告由 KPM 5.3 空間座標精度校正版生成。", 40, 1160);
-
-            const finalDataUrl = c.toDataURL("image/jpeg", 0.9);
-            const reportImg = new Image(); reportImg.src = finalDataUrl;
-            document.getElementById('report-img-container').innerHTML = '';
-            document.getElementById('report-img-container').appendChild(reportImg);
-            document.getElementById('report-preview-layer').style.display = 'flex';
-            const res = await fetch(finalDataUrl); finalBlob = await res.blob();
-        }
-
-        window.shareReport = async () => {
-            const fileName = `${reportData.date}-${reportData.name}.jpg`;
-            const file = new File([finalBlob], fileName, { type: 'image/jpeg' });
-            if (navigator.canShare && navigator.canShare({ files: [file] })) {
-                await navigator.share({ files: [file], title: '體態檢測報告' });
-            } else { alert("長按圖片儲存。"); }
-        };
-
-        function showModal(t, m, b, a) {
-            document.getElementById('next-title').innerText = t;
-            document.getElementById('next-msg').innerText = m;
-            const btn = document.getElementById('next-btn');
-            btn.innerText = b; btn.onclick = a;
-            document.getElementById('step-next-alert').style.display = 'flex';
-        }
     </script>
 </body>
 </html>
